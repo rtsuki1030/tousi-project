@@ -1,0 +1,20 @@
+name: AI trading tick
+
+# Cloudflare's own Cron Triggers have a known bug on new accounts where they
+# register but never fire (see Cloudflare Community reports from 2026), so
+# this workflow pings the Worker's /api/run-now endpoint on a schedule
+# instead. GitHub's scheduler can run a few minutes late under load, but it
+# is far more reliable than a trigger that never fires at all.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger AI tick
+        run: |
+          curl -sf -m 90 "https://tousi-ai-worker.rtsuki1030.workers.dev/api/run-now"
