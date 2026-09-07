@@ -1,0 +1,13 @@
+name = "tousi-ai-worker"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Runs the AI trading tick every 5 minutes, independent of any browser tab.
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Created with `npx wrangler kv namespace create AI_KV` -- paste the real id
+# it prints into the line below before deploying.
+[[kv_namespaces]]
+binding = "AI_KV"
+id = "f92f1f58403e4c91873c2e6f4be0b7eb"

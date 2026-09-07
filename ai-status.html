@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>サーバー側AI運用状況</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header class="app-header">
+  <h1>🤖 サーバー側AI運用</h1>
+  <a href="index.html" class="btn btn-small">← アプリに戻る</a>
+</header>
+
+<main id="app" style="padding-top:16px;">
+  <div class="card">
+    <p class="hint">
+      これはブラウザのタブを閉じても、PCがスリープしても<strong>24時間365日、5分ごとに自動売買を続けるAI</strong>専用のポートフォリオです（Cloudflare Workers上で実行）。
+      あなたが手動で操作しているアプリ本体の資産・履歴とは完全に別会計です。読み取り専用のページなので、ここから操作することはできません。
+    </p>
+    <p class="hint" id="lastRun">最終実行: -</p>
+  </div>
+
+  <div class="card-grid">
+    <div class="card stat-card">
+      <div class="stat-label">総資産</div>
+      <div class="stat-value" id="statTotalAssets">¥0</div>
+      <div class="stat-sub" id="statTotalPL">±0 (0.0%)</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">現金残高</div>
+      <div class="stat-value" id="statCash">¥0</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">実行回数</div>
+      <div class="stat-value" id="statSteps">0</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">勝率（決済分）</div>
+      <div class="stat-value" id="statWinRate">-</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>資産推移</h2>
+    <canvas id="equityChart" height="180"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>保有銘柄</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>銘柄</th><th>クラス</th><th>数量</th><th>平均取得単価</th><th>現在価格</th><th>評価額</th></tr></thead>
+        <tbody id="holdingsBody"></tbody>
+      </table>
+    </div>
+    <p class="empty-hint" id="holdingsEmpty">まだ保有銘柄がありません。</p>
+  </div>
+
+  <div class="card">
+    <h2>取引履歴</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>日付</th><th>種別</th><th>銘柄</th><th>数量</th><th>単価</th><th>実現損益</th></tr></thead>
+        <tbody id="txBody"></tbody>
+      </table>
+    </div>
+    <p class="empty-hint" id="txEmpty">まだ取引がありません。</p>
+  </div>
+
+  <div class="card">
+    <h2>判断ログ</h2>
+    <ul class="ai-log" id="logList"></ul>
+  </div>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+// Set this to your deployed Worker URL after running `wrangler deploy`.
+const WORKER_URL = 'https://tousi-ai-worker.rtsuki1030.workers.dev';
+
+function formatYen(n) {
+  if (!isFinite(n)) n = 0;
+  return '¥' + Math.round(n).toLocaleString('ja-JP');
+}
+function signClass(n) { return n > 0 ? 'positive' : (n < 0 ? 'negative' : ''); }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let equityChart = null;
+
+async function refresh() {
+  let data;
+  try {
+    const res = await fetch(`${WORKER_URL}/api/state`);
+    data = await res.json();
+  } catch (e) {
+    document.getElementById('lastRun').textContent = 'サーバーに接続できませんでした。デプロイ直後は数分かかることがあります。';
+    return;
+  }
+
+  document.getElementById('statTotalAssets').textContent = formatYen(data.totalAssets);
+  const pl = data.totalAssets - data.initialCash;
+  const plPct = data.initialCash > 0 ? (pl / data.initialCash) * 100 : 0;
+  const plEl = document.getElementById('statTotalPL');
+  plEl.textContent = `${pl >= 0 ? '+' : ''}${formatYen(pl)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(1)}%)`;
+  plEl.className = 'stat-sub ' + signClass(pl);
+  document.getElementById('statCash').textContent = formatYen(data.cash);
+  document.getElementById('statSteps').textContent = data.steps.toLocaleString('ja-JP');
+  document.getElementById('statWinRate').textContent = data.closedTrades > 0 ? ((data.wins / data.closedTrades) * 100).toFixed(1) + '%' : '-';
+  document.getElementById('lastRun').textContent = data.lastRunAt
+    ? `最終実行: ${new Date(data.lastRunAt).toLocaleString('ja-JP')}（5分ごとに自動実行）`
+    : 'まだ実行されていません';
+
+  const hBody = document.getElementById('holdingsBody');
+  const hEmpty = document.getElementById('holdingsEmpty');
+  hBody.innerHTML = '';
+  if (!data.holdings || data.holdings.length === 0) {
+    hEmpty.style.display = 'block';
+  } else {
+    hEmpty.style.display = 'none';
+    data.holdings.forEach(h => {
+      const value = h.quantity * h.currentPrice;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(h.symbol)}</strong></td>
+        <td>${h.assetClass === 'crypto' ? '暗号資産' : '株式'}</td>
+        <td>${h.quantity.toLocaleString('ja-JP')}</td>
+        <td>${formatYen(h.avgCost)}</td>
+        <td>${formatYen(h.currentPrice)}</td>
+        <td>${formatYen(value)}</td>
+      `;
+      hBody.appendChild(tr);
+    });
+  }
+
+  const tBody = document.getElementById('txBody');
+  const tEmpty = document.getElementById('txEmpty');
+  tBody.innerHTML = '';
+  if (!data.transactions || data.transactions.length === 0) {
+    tEmpty.style.display = 'block';
+  } else {
+    tEmpty.style.display = 'none';
+    data.transactions.forEach(t => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${t.date}</td>
+        <td>${t.type === 'buy' ? '買い' : '売り'}</td>
+        <td>${escapeHtml(t.symbol)}</td>
+        <td>${t.quantity.toLocaleString('ja-JP')}</td>
+        <td>${formatYen(t.price)}</td>
+        <td class="${t.realizedPL != null ? signClass(t.realizedPL) : ''}">${t.realizedPL != null ? formatYen(t.realizedPL) : '-'}</td>
+      `;
+      tBody.appendChild(tr);
+    });
+  }
+
+  const logList = document.getElementById('logList');
+  logList.innerHTML = (data.log || []).map(e =>
+    `<li><span class="log-meta">${new Date(e.t).toLocaleTimeString('ja-JP')}</span> ${escapeHtml(e.note)}</li>`
+  ).join('') || '<li class="hint">まだ判断がありません</li>';
+
+  const ctx = document.getElementById('equityChart').getContext('2d');
+  const points = data.equityHistory || [];
+  if (equityChart) equityChart.destroy();
+  equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: points.map(p => new Date(p.t).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })),
+      datasets: [{
+        label: '総資産', data: points.map(p => p.value),
+        borderColor: '#2f6fed', backgroundColor: 'rgba(47,111,237,0.12)', fill: true, tension: 0.2, pointRadius: 0,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { y: { ticks: { callback: v => formatYen(v) } } },
+    },
+  });
+}
+
+refresh();
+setInterval(refresh, 30000); // poll every 30s while this page is open
+</script>
+</body>
+</html>
