@@ -227,10 +227,36 @@
     <div class="card">
       <h2>AIによる自動運用について</h2>
       <p class="hint">
-        あなたが保有している株式・暗号資産の実際の価格を定期的に取得し、移動平均のモメンタム（勢い）を見て自動で買い増し・売却を判断します。
+        あなたが保有している銘柄と、下の「ウォッチリスト」に登録した候補銘柄の実際の価格を定期的に取得し、移動平均のモメンタム（勢い）を見て自動で新規購入・買い増し・売却を判断します。
         判断が当たったかどうかを報酬として銘柄ごとの「信頼度」を少しずつ調整する単純な適応アルゴリズムで、対話するAI（Claude本体）を都度呼び出しているわけではありません。
-        実行された売買は通常の取引履歴にも記録され、履歴では🤖マークで区別できます。まずは「売買」タブで対象にしたい銘柄を購入してから開始してください。
+        実行された売買は通常の取引履歴にも記録され、履歴では🤖マークで区別できます。
       </p>
+    </div>
+
+    <div class="card">
+      <h2>ウォッチリスト（AIが新規購入を検討する候補銘柄）</h2>
+      <p class="hint">まだ保有していない銘柄でも、ここに追加すればAIが価格を監視し、シグナルが出れば新規に購入します。日本株（4桁コード）は実価格が取得できないため追加できません。</p>
+      <div id="watchlistItems" style="margin-bottom:14px;"></div>
+      <form id="watchlistForm">
+        <div class="card-grid" style="grid-template-columns:1fr 1fr 1fr auto;align-items:end;">
+          <div class="form-row" style="margin-bottom:0;">
+            <label for="wlSymbol">銘柄コード</label>
+            <input type="text" id="wlSymbol" placeholder="例: NVDA, DOGE">
+          </div>
+          <div class="form-row" style="margin-bottom:0;">
+            <label for="wlName">名称（任意）</label>
+            <input type="text" id="wlName" placeholder="例: NVIDIA">
+          </div>
+          <div class="form-row" style="margin-bottom:0;">
+            <label for="wlClass">資産クラス</label>
+            <select id="wlClass">
+              <option value="crypto">暗号資産</option>
+              <option value="stock">株式</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:auto;">追加</button>
+        </div>
+      </form>
     </div>
 
     <div class="card">
@@ -283,7 +309,7 @@
           <tbody id="aiAssetsBody"></tbody>
         </table>
       </div>
-      <p class="empty-hint" id="aiAssetsEmpty">対象銘柄がありません。先に「売買」タブで購入してください。</p>
+      <p class="empty-hint" id="aiAssetsEmpty">対象銘柄がありません。保有銘柄を増やすか、上のウォッチリストに追加してください。</p>
     </div>
 
     <div class="card">

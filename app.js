@@ -82,6 +82,16 @@ function defaultAiState() {
     history: {},
     log: [],
     lastRunAt: null,
+    // Candidate symbols the AI may open a NEW position in (in addition to
+    // whatever you already hold). Kept small by default to respect the
+    // free-tier stock API rate limit.
+    watchlist: [
+      { symbol: 'BTC', name: 'ビットコイン', assetClass: 'crypto' },
+      { symbol: 'ETH', name: 'イーサリアム', assetClass: 'crypto' },
+      { symbol: 'SOL', name: 'ソラナ', assetClass: 'crypto' },
+      { symbol: 'AAPL', name: 'Apple', assetClass: 'stock' },
+      { symbol: 'MSFT', name: 'Microsoft', assetClass: 'stock' },
+    ],
   };
 }
 
@@ -94,6 +104,7 @@ function migrateState() {
   if (state.cryptoCatalog === undefined) state.cryptoCatalog = null;
   if (state.cryptoCatalogAt === undefined) state.cryptoCatalogAt = null;
   if (!state.ai) state.ai = defaultAiState();
+  if (!state.ai.watchlist) state.ai.watchlist = defaultAiState().watchlist;
 }
 
 function loadState() {
@@ -605,16 +616,20 @@ function maybeRefreshCryptoCatalogInBackground() {
     .finally(() => { catalogRefreshInFlight = false; });
 }
 
-async function fetchCryptoPrices(silent) {
+// symbols: optional array of crypto ticker strings. Defaults to current
+// crypto holdings (used by the manual "auto-fetch" button on the holdings
+// tab). The AI engine passes holdings + watchlist candidates together so it
+// can track prices for symbols it doesn't own yet.
+async function fetchCryptoPrices(silent, symbols) {
   maybeRefreshCryptoCatalogInBackground(); // never blocks this call; fills in over time
 
-  const cryptoHoldings = state.holdings.filter(h => h.assetClass === 'crypto');
-  if (cryptoHoldings.length === 0) {
+  const targetSymbols = symbols || state.holdings.filter(h => h.assetClass === 'crypto').map(h => h.symbol);
+  if (targetSymbols.length === 0) {
     if (!silent) showToast('暗号資産の保有銘柄がありません');
     return { updated: 0, attempted: 0 };
   }
-  const idPairs = cryptoHoldings
-    .map(h => ({ h, id: resolveCryptoId(h.symbol) }))
+  const idPairs = [...new Set(targetSymbols)]
+    .map(symbol => ({ symbol, id: resolveCryptoId(symbol) }))
     .filter(x => x.id);
 
   if (idPairs.length === 0) {
@@ -631,12 +646,13 @@ async function fetchCryptoPrices(silent) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     let updated = 0;
-    idPairs.forEach(({ h, id }) => {
+    idPairs.forEach(({ symbol, id }) => {
       const price = data[id]?.jpy;
       if (typeof price === 'number') {
-        h.currentPrice = price;
-        pushPriceHistory(h.symbol, price);
-        pushAiHistory(h.symbol, price);
+        const h = state.holdings.find(x => x.symbol.toUpperCase() === symbol.toUpperCase());
+        if (h) h.currentPrice = price;
+        pushPriceHistory(symbol, price);
+        pushAiHistory(symbol, price);
         updated++;
       }
     });
@@ -664,65 +680,106 @@ function isJapaneseStockSymbol(symbol) {
   return /^\d{4}$/.test(symbol.trim());
 }
 
-async function fetchOneStockPrice(h) {
-  if (isJapaneseStockSymbol(h.symbol)) {
+// Twelve Data returns each quote in its home currency (USD for AAPL, EUR for
+// many European listings, ...), not JPY. Everything in this app is priced in
+// yen, so foreign-currency quotes must be converted using a live FX rate --
+// otherwise e.g. a $320 stock would be stored and shown as ¥320.
+const fxRateCache = {};
+const FX_RATE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getFxRateToJpy(currency) {
+  if (currency === 'JPY') return 1;
+  const cached = fxRateCache[currency];
+  if (cached && Date.now() - cached.at < FX_RATE_MAX_AGE_MS) return cached.rate;
+  const key = (state.settings.twelveDataKey || '').trim();
+  if (!key) return null;
+  await sleep(2000); // this follows a quote call moments ago; stay under the free-tier rate limit
+  try {
+    const url = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(currency)}/JPY&apikey=${encodeURIComponent(key)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const rate = parseFloat(data.close ?? data.price);
+    if (data.status === 'error' || !isFinite(rate) || rate <= 0) {
+      console.warn(`FX rate ${currency}/JPY unavailable: ${data.message}`);
+      return null;
+    }
+    fxRateCache[currency] = { rate, at: Date.now() };
+    return rate;
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+
+async function fetchOneStockPrice(symbol) {
+  if (isJapaneseStockSymbol(symbol)) {
     return { ok: false, reason: 'jp_manual_only' };
   }
   const key = (state.settings.twelveDataKey || '').trim();
   if (!key) return { ok: false, reason: 'no_key_twelvedata' };
   try {
-    const url = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(h.symbol)}&apikey=${encodeURIComponent(key)}`;
+    const url = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`;
     const res = await fetch(url);
     const data = await res.json();
-    const price = parseFloat(data.close ?? data.price);
-    if (data.status !== 'error' && isFinite(price) && price > 0) return { ok: true, price };
-    console.warn(`Twelve Data: ${h.symbol} - ${data.message}`);
-    return { ok: false, reason: 'api_error' };
+    const rawPrice = parseFloat(data.close ?? data.price);
+    if (data.status === 'error' || !isFinite(rawPrice) || rawPrice <= 0) {
+      console.warn(`Twelve Data: ${symbol} - ${data.message}`);
+      return { ok: false, reason: 'api_error' };
+    }
+    const currency = data.currency || 'USD';
+    if (currency === 'JPY') return { ok: true, price: rawPrice };
+    const fxRate = await getFxRateToJpy(currency);
+    if (fxRate == null) return { ok: false, reason: 'fx_error' };
+    return { ok: true, price: rawPrice * fxRate };
   } catch (e) {
     console.error(e);
     return { ok: false, reason: 'network' };
   }
 }
 
-async function fetchStockPrices(silent) {
-  const stockHoldings = state.holdings.filter(h => h.assetClass === 'stock' || h.assetClass === 'fund');
-  if (stockHoldings.length === 0) {
+// symbols: optional array of stock ticker strings; defaults to current
+// stock/fund holdings (manual "auto-fetch" button behavior).
+async function fetchStockPrices(silent, symbols) {
+  const targetSymbols = symbols || state.holdings.filter(h => h.assetClass === 'stock' || h.assetClass === 'fund').map(h => h.symbol);
+  if (targetSymbols.length === 0) {
     if (!silent) showToast('株式・投信の保有銘柄がありません');
     return { updated: 0, attempted: 0 };
   }
-  if (!state.settings.twelveDataKey && !state.settings.fcsApiKey) {
+  if (!state.settings.twelveDataKey) {
     if (!silent) showToast('設定タブでTwelve DataのAPIキーを登録してください（米国株など向け）');
     return { updated: 0, attempted: 0 };
   }
 
-  if (!silent) showToast(`${stockHoldings.length}銘柄の価格を取得中...`);
+  const uniqueSymbols = [...new Set(targetSymbols)];
+  if (!silent) showToast(`${uniqueSymbols.length}銘柄の価格を取得中...`);
   let updated = 0;
   let skippedJp = 0;
-  for (let i = 0; i < stockHoldings.length; i++) {
-    const h = stockHoldings[i];
-    const result = await fetchOneStockPrice(h);
+  for (let i = 0; i < uniqueSymbols.length; i++) {
+    const symbol = uniqueSymbols[i];
+    const result = await fetchOneStockPrice(symbol);
     if (result.ok) {
-      h.currentPrice = result.price;
-      pushPriceHistory(h.symbol, result.price);
-      pushAiHistory(h.symbol, result.price);
+      const h = state.holdings.find(x => x.symbol.toUpperCase() === symbol.toUpperCase());
+      if (h) h.currentPrice = result.price;
+      pushPriceHistory(symbol, result.price);
+      pushAiHistory(symbol, result.price);
       updated++;
     } else if (result.reason === 'jp_manual_only') {
       skippedJp++;
     }
-    if (i < stockHoldings.length - 1) await sleep(8000); // respect free-tier rate limits
+    if (i < uniqueSymbols.length - 1) await sleep(8000); // respect free-tier rate limits
   }
   saveState();
   render();
   if (!silent) {
     if (updated > 0) {
-      showToast(`${updated}/${stockHoldings.length}銘柄の価格を更新しました`);
-    } else if (skippedJp === stockHoldings.length) {
+      showToast(`${updated}/${uniqueSymbols.length}銘柄の価格を更新しました`);
+    } else if (skippedJp === uniqueSymbols.length) {
       showToast('日本株（4桁コード）は無料APIでは取得できません。手動入力してください。');
     } else {
       showToast('価格を取得できませんでした（APIキーや銘柄コードを確認してください）');
     }
   }
-  return { updated, attempted: stockHoldings.length - skippedJp };
+  return { updated, attempted: uniqueSymbols.length - skippedJp };
 }
 
 // ---------- AI auto-trading (real prices, real portfolio) ----------
@@ -758,72 +815,92 @@ async function aiTick() {
   }
 }
 
+// Union of what you already hold + the AI's watchlist candidates, so it can
+// both manage existing positions and discover new ones. Held entries win on
+// duplicate symbols (keeps the real name/assetClass from the holding).
+function aiUniverse() {
+  const ai = state.ai;
+  const bySymbol = {};
+  ai.watchlist.forEach(w => { bySymbol[w.symbol.toUpperCase()] = { symbol: w.symbol, name: w.name, assetClass: w.assetClass }; });
+  state.holdings
+    .filter(h => h.assetClass === 'crypto' || h.assetClass === 'stock' || h.assetClass === 'fund')
+    .forEach(h => { bySymbol[h.symbol.toUpperCase()] = { symbol: h.symbol, name: h.name, assetClass: h.assetClass }; });
+  return Object.values(bySymbol);
+}
+
 async function aiTickInner() {
   const ai = state.ai;
   ai.steps++;
   ai.lastRunAt = Date.now();
 
-  const cryptoResult = await fetchCryptoPrices(true);
-  const stockResult = await fetchStockPrices(true);
+  const universe = aiUniverse();
+  const cryptoSymbols = universe.filter(x => x.assetClass === 'crypto').map(x => x.symbol);
+  const stockSymbols = universe.filter(x => x.assetClass === 'stock' || x.assetClass === 'fund').map(x => x.symbol);
+
+  const cryptoResult = cryptoSymbols.length ? await fetchCryptoPrices(true, cryptoSymbols) : { attempted: 0 };
+  const stockResult = stockSymbols.length ? await fetchStockPrices(true, stockSymbols) : { attempted: 0 };
   const attempted = cryptoResult.attempted + stockResult.attempted;
 
   if (attempted === 0) {
-    pushAiLog('価格取得の対象銘柄がありません（保有銘柄を増やすか、Twelve DataのAPIキーを設定してください）');
+    pushAiLog('価格取得の対象銘柄がありません（保有銘柄やウォッチリストを増やすか、Twelve DataのAPIキーを設定してください）');
     saveState();
     renderAiTab();
     return;
   }
 
-  const managed = state.holdings.filter(h => h.assetClass === 'crypto' || h.assetClass === 'stock' || h.assetClass === 'fund');
   const lr = 0.5;
 
-  managed.forEach(h => {
-    const hist = ai.history[h.symbol];
+  universe.forEach(u => {
+    const symbol = u.symbol;
+    const hist = ai.history[symbol];
     if (!hist || hist.length < 4) return; // not enough data yet
+    const currentPrice = hist[hist.length - 1].price;
+    const h = state.holdings.find(x => x.symbol.toUpperCase() === symbol.toUpperCase());
 
     const shortMA = avgLast(hist, 2);
     const longMA = avgLast(hist, 4);
     if (shortMA == null || longMA == null || longMA <= 0) return;
     const momentum = (shortMA - longMA) / longMA;
 
-    const prevDecision = ai.weights['_last_' + h.symbol];
+    const prevDecision = ai.weights['_last_' + symbol];
     if (prevDecision) {
-      const realizedReturn = (h.currentPrice - prevDecision.priceAtDecision) / prevDecision.priceAtDecision;
+      const realizedReturn = (currentPrice - prevDecision.priceAtDecision) / prevDecision.priceAtDecision;
       const agreement = Math.sign(prevDecision.momentum) * Math.sign(realizedReturn);
-      const w = ai.weights[h.symbol] || 0;
+      const w = ai.weights[symbol] || 0;
       const newW = Math.max(-3, Math.min(3, w + lr * agreement * Math.abs(realizedReturn) * 30));
-      ai.weights[h.symbol] = newW;
+      ai.weights[symbol] = newW;
     }
 
-    const weight = ai.weights[h.symbol] || 0;
+    const weight = ai.weights[symbol] || 0;
     const score = momentum * (1 + weight);
 
     let action = 'hold';
     if (score > 0.006) action = 'buy';
-    else if (score < -0.006 && h.quantity > 0) action = 'sell';
+    else if (score < -0.006 && h && h.quantity > 0) action = 'sell';
 
     if (action === 'buy') {
       const budget = Math.min(state.cash * 0.15, state.cash);
-      const qty = h.assetClass === 'crypto' ? (budget > 0 ? +(budget / h.currentPrice).toFixed(6) : 0) : Math.floor(budget / h.currentPrice);
+      const qty = u.assetClass === 'crypto' ? (budget > 0 ? +(budget / currentPrice).toFixed(6) : 0) : Math.floor(budget / currentPrice);
       if (qty > 0) {
-        const result = doBuy({ symbol: h.symbol, name: h.name, assetClass: h.assetClass, quantity: qty, price: h.currentPrice, date: todayStr(), source: 'ai' });
+        const isNew = !h;
+        const result = doBuy({ symbol, name: u.name, assetClass: u.assetClass, quantity: qty, price: currentPrice, date: todayStr(), source: 'ai' });
         if (result.ok) {
           ai.trades++;
-          pushAiLog(`買い: ${h.symbol} ${qty} @ ${formatYen(h.currentPrice)}（モメンタム${formatPct(momentum * 100)} / 信頼度${weight.toFixed(2)}）`);
+          pushAiLog(`${isNew ? '新規購入' : '買い'}: ${symbol} ${qty} @ ${formatYen(currentPrice)}（モメンタム${formatPct(momentum * 100)} / 信頼度${weight.toFixed(2)}）`);
         }
       }
-    } else if (action === 'sell') {
-      const won = h.currentPrice > h.avgCost;
-      const result = doSell({ symbol: h.symbol, quantity: h.quantity, price: h.currentPrice, date: todayStr(), source: 'ai' });
+    } else if (action === 'sell' && h) {
+      const won = currentPrice > h.avgCost;
+      const result = doSell({ symbol, quantity: h.quantity, price: currentPrice, date: todayStr(), source: 'ai' });
       if (result.ok) {
         ai.trades++;
         ai.closedTrades++;
         if (won) ai.wins++;
-        pushAiLog(`売り: ${h.symbol}（${won ? '含み益で決済' : '含み損で決済'} / 信頼度${weight.toFixed(2)}）`);
+        pushAiLog(`売り: ${symbol}（${won ? '含み益で決済' : '含み損で決済'} / 信頼度${weight.toFixed(2)}）`);
       }
     }
 
-    ai.weights['_last_' + h.symbol] = { momentum, priceAtDecision: h.currentPrice };
+    ai.weights['_last_' + symbol] = { momentum, priceAtDecision: currentPrice };
   });
 
   saveState();
@@ -859,32 +936,47 @@ function renderAiTab() {
   document.getElementById('aiWinRate').textContent = ai.closedTrades > 0 ? ((ai.wins / ai.closedTrades) * 100).toFixed(1) + '%' : '-';
   document.getElementById('aiLastRun').textContent = ai.lastRunAt ? new Date(ai.lastRunAt).toLocaleTimeString('ja-JP') : '-';
 
-  const managed = state.holdings.filter(h => h.assetClass === 'crypto' || h.assetClass === 'stock' || h.assetClass === 'fund');
+  const universe = aiUniverse();
   const body = document.getElementById('aiAssetsBody');
   const empty = document.getElementById('aiAssetsEmpty');
   body.innerHTML = '';
-  if (managed.length === 0) {
+  if (universe.length === 0) {
     empty.style.display = 'block';
   } else {
     empty.style.display = 'none';
-    managed.forEach(h => {
-      const weight = ai.weights[h.symbol] || 0;
+    universe.forEach(u => {
+      const symbol = u.symbol;
+      const h = state.holdings.find(x => x.symbol.toUpperCase() === symbol.toUpperCase());
+      const hist = ai.history[symbol];
+      const price = hist && hist.length ? hist[hist.length - 1].price : (h ? h.currentPrice : null);
+      const weight = ai.weights[symbol] || 0;
       const weightPct = ((weight + 3) / 6) * 100;
-      const last = ai.weights['_last_' + h.symbol];
+      const last = ai.weights['_last_' + symbol];
       const lastAction = last ? (last.momentum > 0.006 ? 'buy' : last.momentum < -0.006 ? 'sell' : 'hold') : 'hold';
       const badgeClass = lastAction === 'buy' ? 'badge-buy' : lastAction === 'sell' ? 'badge-sell' : 'badge-hold';
       const badgeLabel = lastAction === 'buy' ? '買い' : lastAction === 'sell' ? '売り' : '様子見';
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><strong>${escapeHtml(h.symbol)}</strong></td>
-        <td>${formatYen(h.currentPrice)}</td>
-        <td>${h.quantity.toLocaleString('ja-JP')}</td>
+        <td><strong>${escapeHtml(symbol)}</strong>${h ? '' : '<br><span class="hint">候補</span>'}</td>
+        <td>${price != null ? formatYen(price) : '取得中'}</td>
+        <td>${h ? h.quantity.toLocaleString('ja-JP') : '-'}</td>
         <td><div class="weight-track"><div class="weight-fill" style="left:${weightPct}%;background:${weight >= 0 ? 'var(--green)' : 'var(--red)'}"></div></div></td>
         <td><span class="badge ${badgeClass}">${badgeLabel}</span></td>
       `;
       body.appendChild(tr);
     });
   }
+
+  const wlList = document.getElementById('watchlistItems');
+  wlList.innerHTML = ai.watchlist.map(w => `
+    <span class="badge badge-hold" style="margin:2px;padding:4px 10px;">
+      ${escapeHtml(w.symbol)} (${ASSET_CLASS_LABEL[w.assetClass] || w.assetClass})
+      <button type="button" class="icon-btn" data-symbol="${escapeHtml(w.symbol)}" style="padding:0 0 0 6px;">×</button>
+    </span>
+  `).join('') || '<span class="hint">ウォッチリストは空です</span>';
+  wlList.querySelectorAll('.icon-btn').forEach(btn => {
+    btn.addEventListener('click', () => removeFromWatchlist(btn.dataset.symbol));
+  });
 
   const logList = document.getElementById('aiLog');
   const logEmpty = document.getElementById('aiLogEmpty');
@@ -903,13 +995,45 @@ function setupAiActions() {
     if (aiTimer) { clearInterval(aiTimer); aiTimer = setInterval(aiTick, state.ai.tickIntervalSec * 1000); }
   });
   document.getElementById('btnAiReset').addEventListener('click', () => {
-    if (!confirm('AIの学習内容（信頼度・ログ）をリセットします。保有銘柄や取引履歴は変わりません。よろしいですか？')) return;
+    if (!confirm('AIの学習内容（信頼度・ログ）をリセットします。保有銘柄・取引履歴・ウォッチリストは変わりません。よろしいですか？')) return;
     stopAi();
+    const keepWatchlist = state.ai.watchlist;
+    const keepIntervalSec = state.ai.tickIntervalSec;
     state.ai = defaultAiState();
+    state.ai.watchlist = keepWatchlist;
+    state.ai.tickIntervalSec = keepIntervalSec;
     saveState();
     renderAiTab();
     showToast('AIの学習状態をリセットしました');
   });
+
+  document.getElementById('watchlistForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const symbol = document.getElementById('wlSymbol').value.trim().toUpperCase();
+    const name = document.getElementById('wlName').value.trim();
+    const assetClass = document.getElementById('wlClass').value;
+    if (!symbol) return;
+    if (state.ai.watchlist.some(w => w.symbol.toUpperCase() === symbol)) {
+      showToast('すでにウォッチリストに追加されています');
+      return;
+    }
+    if (isJapaneseStockSymbol(symbol) && assetClass !== 'crypto') {
+      showToast('日本株（4桁コード）は実価格取得に対応していないため追加できません');
+      return;
+    }
+    state.ai.watchlist.push({ symbol, name: name || symbol, assetClass });
+    saveState();
+    document.getElementById('wlSymbol').value = '';
+    document.getElementById('wlName').value = '';
+    renderAiTab();
+    showToast(`${symbol} をウォッチリストに追加しました`);
+  });
+}
+
+function removeFromWatchlist(symbol) {
+  state.ai.watchlist = state.ai.watchlist.filter(w => w.symbol !== symbol);
+  saveState();
+  renderAiTab();
 }
 
 function setupApiKeyForm() {
