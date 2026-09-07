@@ -83,17 +83,40 @@ function defaultAiState() {
     log: [],
     lastRunAt: null,
     // Candidate symbols the AI may open a NEW position in (in addition to
-    // whatever you already hold). Kept small by default to respect the
-    // free-tier stock API rate limit.
+    // whatever you already hold). `pinned: true` = you added it by hand and
+    // it's never auto-removed; `pinned: false` = the AI found it itself
+    // during discovery and may rotate it out later.
     watchlist: [
-      { symbol: 'BTC', name: 'ビットコイン', assetClass: 'crypto' },
-      { symbol: 'ETH', name: 'イーサリアム', assetClass: 'crypto' },
-      { symbol: 'SOL', name: 'ソラナ', assetClass: 'crypto' },
-      { symbol: 'AAPL', name: 'Apple', assetClass: 'stock' },
-      { symbol: 'MSFT', name: 'Microsoft', assetClass: 'stock' },
+      { symbol: 'BTC', name: 'ビットコイン', assetClass: 'crypto', pinned: false, addedAtStep: 0 },
+      { symbol: 'ETH', name: 'イーサリアム', assetClass: 'crypto', pinned: false, addedAtStep: 0 },
     ],
+    autoDiscover: true,
+    cryptoWatchCap: 8,
+    stockWatchCap: 4,
   };
 }
+
+// A safe, curated pool of well-known, liquid US large-caps for the AI's
+// stock discovery to rotate through. Twelve Data's free-tier symbol list is
+// unfiltered (thousands of SPACs and micro-caps with no market-cap data to
+// rank them by), so random selection from the whole market isn't safe --
+// this curated pool is the practical stand-in for "the market" on stocks.
+const CURATED_STOCK_POOL = [
+  { symbol: 'AAPL', name: 'Apple' }, { symbol: 'MSFT', name: 'Microsoft' }, { symbol: 'GOOGL', name: 'Alphabet' },
+  { symbol: 'AMZN', name: 'Amazon' }, { symbol: 'NVDA', name: 'NVIDIA' }, { symbol: 'META', name: 'Meta' },
+  { symbol: 'TSLA', name: 'Tesla' }, { symbol: 'JPM', name: 'JPMorgan Chase' }, { symbol: 'V', name: 'Visa' },
+  { symbol: 'JNJ', name: 'Johnson & Johnson' }, { symbol: 'WMT', name: 'Walmart' }, { symbol: 'PG', name: 'Procter & Gamble' },
+  { symbol: 'MA', name: 'Mastercard' }, { symbol: 'HD', name: 'Home Depot' }, { symbol: 'DIS', name: 'Disney' },
+  { symbol: 'KO', name: 'Coca-Cola' }, { symbol: 'PEP', name: 'PepsiCo' }, { symbol: 'NFLX', name: 'Netflix' },
+  { symbol: 'ADBE', name: 'Adobe' }, { symbol: 'CRM', name: 'Salesforce' }, { symbol: 'INTC', name: 'Intel' },
+  { symbol: 'AMD', name: 'AMD' }, { symbol: 'CSCO', name: 'Cisco' }, { symbol: 'ORCL', name: 'Oracle' },
+  { symbol: 'IBM', name: 'IBM' }, { symbol: 'PYPL', name: 'PayPal' }, { symbol: 'NKE', name: 'Nike' },
+  { symbol: 'MCD', name: "McDonald's" }, { symbol: 'COST', name: 'Costco' }, { symbol: 'ABT', name: 'Abbott' },
+  { symbol: 'AVGO', name: 'Broadcom' }, { symbol: 'TXN', name: 'Texas Instruments' }, { symbol: 'QCOM', name: 'Qualcomm' },
+  { symbol: 'HON', name: 'Honeywell' }, { symbol: 'UNH', name: 'UnitedHealth' }, { symbol: 'XOM', name: 'ExxonMobil' },
+  { symbol: 'CVX', name: 'Chevron' }, { symbol: 'BA', name: 'Boeing' }, { symbol: 'GE', name: 'GE Aerospace' },
+  { symbol: 'UBER', name: 'Uber' }, { symbol: 'SBUX', name: 'Starbucks' },
+];
 
 function migrateState() {
   if (!state.cashAdjustments) state.cashAdjustments = [];
@@ -105,6 +128,13 @@ function migrateState() {
   if (state.cryptoCatalogAt === undefined) state.cryptoCatalogAt = null;
   if (!state.ai) state.ai = defaultAiState();
   if (!state.ai.watchlist) state.ai.watchlist = defaultAiState().watchlist;
+  state.ai.watchlist.forEach(w => {
+    if (w.pinned === undefined) w.pinned = true; // pre-existing entries were manually curated
+    if (w.addedAtStep === undefined) w.addedAtStep = state.ai.steps;
+  });
+  if (state.ai.autoDiscover === undefined) state.ai.autoDiscover = true;
+  if (state.ai.cryptoWatchCap === undefined) state.ai.cryptoWatchCap = 8;
+  if (state.ai.stockWatchCap === undefined) state.ai.stockWatchCap = 4;
 }
 
 function loadState() {
@@ -818,6 +848,57 @@ async function aiTick() {
 // Union of what you already hold + the AI's watchlist candidates, so it can
 // both manage existing positions and discover new ones. Held entries win on
 // duplicate symbols (keeps the real name/assetClass from the holding).
+// Every few ticks, the AI prunes one weak, unpinned candidate (if any has
+// had a fair shot and shown a poor signal) and adds fresh ones to take its
+// place -- crypto from the real market-cap-ranked CoinGecko catalog, stocks
+// from the curated large-cap pool. Symbols you add by hand (pinned) and
+// anything you actually hold are never touched here.
+const AI_DISCOVERY_EVERY_N_TICKS = 5;
+const AI_DISCOVERY_TOP_CRYPTO = 150;
+
+function autoDiscoverCandidates() {
+  const ai = state.ai;
+  if (!ai.autoDiscover) return;
+  if (ai.steps % AI_DISCOVERY_EVERY_N_TICKS !== 0) return;
+
+  const heldSymbols = new Set(state.holdings.map(h => h.symbol.toUpperCase()));
+
+  // prune one weak, unpinned, unheld candidate that's had a fair shot
+  const prunable = ai.watchlist.filter(w =>
+    !w.pinned && !heldSymbols.has(w.symbol.toUpperCase()) &&
+    (ai.steps - w.addedAtStep) >= AI_DISCOVERY_EVERY_N_TICKS &&
+    (ai.weights[w.symbol] || 0) <= -0.3
+  );
+  if (prunable.length > 0) {
+    const gone = prunable[Math.floor(Math.random() * prunable.length)];
+    ai.watchlist = ai.watchlist.filter(w => w.symbol !== gone.symbol);
+    pushAiLog(`ウォッチリストから除外（信頼度が低い）: ${gone.symbol}`);
+  }
+
+  const excluded = new Set([...heldSymbols, ...ai.watchlist.map(w => w.symbol.toUpperCase())]);
+
+  const cryptoCandidateCount = ai.watchlist.filter(w => w.assetClass === 'crypto' && !heldSymbols.has(w.symbol.toUpperCase())).length;
+  if (cryptoCandidateCount < ai.cryptoWatchCap && state.cryptoCatalog) {
+    const pool = Object.keys(state.cryptoCatalog).slice(0, AI_DISCOVERY_TOP_CRYPTO).filter(s => !excluded.has(s));
+    if (pool.length > 0) {
+      const symbol = pool[Math.floor(Math.random() * pool.length)];
+      ai.watchlist.push({ symbol, name: symbol, assetClass: 'crypto', pinned: false, addedAtStep: ai.steps });
+      excluded.add(symbol);
+      pushAiLog(`ウォッチリストに追加（自動探索・暗号資産）: ${symbol}`);
+    }
+  }
+
+  const stockCandidateCount = ai.watchlist.filter(w => (w.assetClass === 'stock' || w.assetClass === 'fund') && !heldSymbols.has(w.symbol.toUpperCase())).length;
+  if (stockCandidateCount < ai.stockWatchCap) {
+    const pool = CURATED_STOCK_POOL.filter(p => !excluded.has(p.symbol));
+    if (pool.length > 0) {
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      ai.watchlist.push({ symbol: pick.symbol, name: pick.name, assetClass: 'stock', pinned: false, addedAtStep: ai.steps });
+      pushAiLog(`ウォッチリストに追加（自動探索・株式）: ${pick.symbol}`);
+    }
+  }
+}
+
 function aiUniverse() {
   const ai = state.ai;
   const bySymbol = {};
@@ -832,6 +913,8 @@ async function aiTickInner() {
   const ai = state.ai;
   ai.steps++;
   ai.lastRunAt = Date.now();
+
+  autoDiscoverCandidates();
 
   const universe = aiUniverse();
   const cryptoSymbols = universe.filter(x => x.assetClass === 'crypto').map(x => x.symbol);
@@ -967,13 +1050,15 @@ function renderAiTab() {
     });
   }
 
+  document.getElementById('aiAutoDiscover').checked = !!ai.autoDiscover;
+
   const wlList = document.getElementById('watchlistItems');
   wlList.innerHTML = ai.watchlist.map(w => `
     <span class="badge badge-hold" style="margin:2px;padding:4px 10px;">
-      ${escapeHtml(w.symbol)} (${ASSET_CLASS_LABEL[w.assetClass] || w.assetClass})
+      ${w.pinned ? '📌 ' : ''}${escapeHtml(w.symbol)} (${ASSET_CLASS_LABEL[w.assetClass] || w.assetClass})
       <button type="button" class="icon-btn" data-symbol="${escapeHtml(w.symbol)}" style="padding:0 0 0 6px;">×</button>
     </span>
-  `).join('') || '<span class="hint">ウォッチリストは空です</span>';
+  `).join('') || '<span class="hint">ウォッチリストは空です（自動探索がONならまもなく候補が追加されます）</span>';
   wlList.querySelectorAll('.icon-btn').forEach(btn => {
     btn.addEventListener('click', () => removeFromWatchlist(btn.dataset.symbol));
   });
@@ -993,6 +1078,11 @@ function setupAiActions() {
     state.ai.tickIntervalSec = parseInt(e.target.value, 10);
     saveState();
     if (aiTimer) { clearInterval(aiTimer); aiTimer = setInterval(aiTick, state.ai.tickIntervalSec * 1000); }
+  });
+  document.getElementById('aiAutoDiscover').addEventListener('change', (e) => {
+    state.ai.autoDiscover = e.target.checked;
+    saveState();
+    showToast(state.ai.autoDiscover ? '自動探索をONにしました' : '自動探索をOFFにしました');
   });
   document.getElementById('btnAiReset').addEventListener('click', () => {
     if (!confirm('AIの学習内容（信頼度・ログ）をリセットします。保有銘柄・取引履歴・ウォッチリストは変わりません。よろしいですか？')) return;
@@ -1021,7 +1111,7 @@ function setupAiActions() {
       showToast('日本株（4桁コード）は実価格取得に対応していないため追加できません');
       return;
     }
-    state.ai.watchlist.push({ symbol, name: name || symbol, assetClass });
+    state.ai.watchlist.push({ symbol, name: name || symbol, assetClass, pinned: true, addedAtStep: state.ai.steps });
     saveState();
     document.getElementById('wlSymbol').value = '';
     document.getElementById('wlName').value = '';

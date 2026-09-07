@@ -235,7 +235,14 @@
 
     <div class="card">
       <h2>ウォッチリスト（AIが新規購入を検討する候補銘柄）</h2>
-      <p class="hint">まだ保有していない銘柄でも、ここに追加すればAIが価格を監視し、シグナルが出れば新規に購入します。日本株（4桁コード）は実価格が取得できないため追加できません。</p>
+      <p class="hint">
+        まだ保有していない銘柄でも、ここに追加すればAIが価格を監視し、シグナルが出れば新規に購入します。日本株（4桁コード）は実価格が取得できないため追加できません。<br>
+        「自動探索」をONにすると、AIが暗号資産は時価総額上位（CoinGecko実データ）から、株式は主要企業プールから、自分でウォッチリストの銘柄を入れ替えていきます（数ティックごとに1件ずつ、信頼度の低い候補は自動で外れます）。手動で追加した銘柄（📌）は自動探索で外れません。
+      </p>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:14px;">
+        <input type="checkbox" id="aiAutoDiscover" style="width:auto;">
+        AIが自動で新しい候補を探す（自動探索）
+      </label>
       <div id="watchlistItems" style="margin-bottom:14px;"></div>
       <form id="watchlistForm">
         <div class="card-grid" style="grid-template-columns:1fr 1fr 1fr auto;align-items:end;">
