@@ -1,0 +1,1774 @@
+<title>投資ノート</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --paper:#F0F2EC;
+  --surface:#FFFFFF;
+  --surface-2:#F7F8F4;
+  --border:#DCE1D8;
+  --ink:#1B2420;
+  --muted:#5E675F;
+  --accent:#1F6F52;
+  --accent-ink:#F4FBF7;
+  --gain:#1F6F52;
+  --gain-soft:#E4F1EA;
+  --loss:#B14B36;
+  --loss-soft:#FBEAE6;
+  --gold:#A9781F;
+  --gold-soft:#F6EEDA;
+  --shadow:0 1px 2px rgba(27,36,32,0.05), 0 4px 14px rgba(27,36,32,0.06);
+  --radius-s:3px;
+  --radius-m:6px;
+  --font-display:'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',serif;
+  --font-body:'Zen Kaku Gothic New','Hiragino Sans','Yu Gothic',sans-serif;
+  --font-mono:'JetBrains Mono','SF Mono',Consolas,monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#121613;
+    --surface:#181F1B;
+    --surface-2:#1E2621;
+    --border:#2B332D;
+    --ink:#ECEFE9;
+    --muted:#93998E;
+    --accent:#3FAE83;
+    --accent-ink:#0A1712;
+    --gain:#3FAE83;
+    --gain-soft:#193226;
+    --loss:#E2775F;
+    --loss-soft:#3A2119;
+    --gold:#D6A64C;
+    --gold-soft:#332711;
+    --shadow:0 1px 2px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.35);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#121613;
+  --surface:#181F1B;
+  --surface-2:#1E2621;
+  --border:#2B332D;
+  --ink:#ECEFE9;
+  --muted:#93998E;
+  --accent:#3FAE83;
+  --accent-ink:#0A1712;
+  --gain:#3FAE83;
+  --gain-soft:#193226;
+  --loss:#E2775F;
+  --loss-soft:#3A2119;
+  --gold:#D6A64C;
+  --gold-soft:#332711;
+  --shadow:0 1px 2px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.35);
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--font-body);
+  padding-bottom:40px;
+}
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
+
+/* ---- masthead ---- */
+.masthead{
+  padding:28px clamp(16px,4vw,40px) 0;
+  max-width:980px;
+  margin:0 auto;
+}
+.masthead-row{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:16px;
+  flex-wrap:wrap;
+  border-bottom:1px solid var(--border);
+  padding-bottom:18px;
+}
+.brand{
+  font-family:var(--font-display);
+  font-size:22px;
+  font-weight:600;
+  letter-spacing:0.02em;
+  margin:0;
+}
+.brand-sub{
+  display:block;
+  font-family:var(--font-body);
+  font-size:11px;
+  color:var(--muted);
+  letter-spacing:0.14em;
+  margin-top:3px;
+}
+.masthead-total{text-align:right;}
+.masthead-total .num{
+  font-size:30px;
+  font-weight:600;
+  color:var(--ink);
+  line-height:1;
+}
+.masthead-total .label{
+  display:block;
+  font-size:11px;
+  color:var(--muted);
+  letter-spacing:0.1em;
+  margin-bottom:4px;
+}
+
+/* ---- tabs ---- */
+.tabbar{
+  display:flex;
+  gap:2px;
+  max-width:980px;
+  margin:0 auto;
+  padding:0 clamp(16px,4vw,40px);
+  overflow-x:auto;
+  scrollbar-width:none;
+  border-bottom:1px solid var(--border);
+}
+.tabbar::-webkit-scrollbar{display:none;}
+.tab-btn{
+  flex:0 0 auto;
+  border:none;
+  background:none;
+  color:var(--muted);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:700;
+  letter-spacing:0.08em;
+  padding:12px 14px 10px;
+  cursor:pointer;
+  border-bottom:2px solid transparent;
+  margin-bottom:-1px;
+  white-space:nowrap;
+}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+main{max-width:980px;margin:0 auto;padding:22px clamp(16px,4vw,40px) 0;}
+.tab-panel{display:none;}
+.tab-panel.active{display:block;}
+
+/* ---- cards ---- */
+.card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-m);
+  padding:18px 20px;
+  margin-bottom:18px;
+}
+.card h2{
+  font-family:var(--font-display);
+  font-size:15px;
+  font-weight:600;
+  margin:0 0 12px;
+  letter-spacing:0.02em;
+}
+.card-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap;}
+.card-title-row h2{margin:0;}
+
+.stat-grid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  border:1px solid var(--border);
+  border-radius:var(--radius-m);
+  overflow:hidden;
+  margin-bottom:18px;
+  background:var(--surface);
+}
+.stat-tile{
+  padding:16px 18px;
+  border-right:1px solid var(--border);
+}
+.stat-tile:last-child{border-right:none;}
+.stat-tile .label{font-size:11px;color:var(--muted);letter-spacing:0.08em;margin-bottom:8px;}
+.stat-tile .value{font-size:21px;font-weight:600;}
+.stat-tile .sub{font-size:12px;color:var(--muted);margin-top:4px;}
+.gain{color:var(--gain);}
+.loss{color:var(--loss);}
+
+.two-col{display:grid;grid-template-columns:1fr;gap:18px;}
+@media (min-width:680px){.two-col{grid-template-columns:1fr 1fr;}}
+
+.hint{font-size:12px;color:var(--muted);margin:8px 0 0;line-height:1.6;}
+.empty-hint{font-size:13px;color:var(--muted);text-align:center;padding:26px 0;}
+
+/* ---- table ---- */
+.table-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:600px;}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
+th{color:var(--muted);font-weight:700;font-size:10.5px;letter-spacing:0.08em;}
+.sub-line{display:block;font-size:11px;color:var(--muted);margin-top:2px;font-family:var(--font-body);}
+
+/* ---- buttons ---- */
+.btn{
+  border:1px solid var(--border);
+  background:var(--surface);
+  color:var(--ink);
+  font-family:var(--font-body);
+  padding:9px 16px;
+  border-radius:var(--radius-s);
+  font-size:12.5px;
+  font-weight:700;
+  letter-spacing:0.04em;
+  cursor:pointer;
+}
+.btn:hover{border-color:var(--accent);}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);width:100%;padding:13px;font-size:13.5px;letter-spacing:0.06em;}
+.btn-primary:hover{opacity:0.92;}
+.btn-danger{background:var(--loss-soft);border-color:var(--loss);color:var(--loss);}
+.btn-file{display:inline-flex;align-items:center;}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;}
+
+/* ---- forms ---- */
+.form-row{margin-bottom:14px;display:flex;flex-direction:column;gap:6px;}
+.form-row label{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:0.06em;}
+.form-row input,.form-row select{
+  border:1px solid var(--border);
+  background:var(--surface-2);
+  color:var(--ink);
+  padding:10px 12px;
+  border-radius:var(--radius-s);
+  font-size:15px;
+  font-family:var(--font-mono);
+  width:100%;
+}
+.form-row select{font-family:var(--font-body);}
+.summary-row{background:var(--gold-soft);border:1px solid var(--gold);padding:10px 12px;border-radius:var(--radius-s);font-size:13px;color:var(--gold);font-weight:700;font-family:var(--font-mono);}
+
+.segmented{display:flex;border:1px solid var(--border);border-radius:var(--radius-s);overflow:hidden;}
+.seg-btn{flex:1;border:none;background:var(--surface-2);color:var(--muted);padding:10px;font-size:13px;font-weight:700;letter-spacing:0.04em;cursor:pointer;font-family:var(--font-body);}
+.seg-btn.active{background:var(--accent);color:var(--accent-ink);}
+
+.form-msg{font-size:12.5px;margin-top:8px;min-height:18px;}
+.form-msg.error{color:var(--loss);}
+.form-msg.success{color:var(--gain);}
+
+.progress-bar{height:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:99px;overflow:hidden;}
+.progress-bar.large{height:14px;}
+.progress-fill{height:100%;background:var(--gold);width:0%;transition:width .3s;}
+
+.icon-btn{border:none;background:none;cursor:pointer;color:var(--muted);font-size:14px;padding:4px 8px;font-family:var(--font-mono);}
+.icon-btn:hover{color:var(--loss);}
+
+.mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--radius-s);overflow:hidden;margin-top:14px;}
+.mini-tile{background:var(--surface);padding:12px 14px;}
+.mini-tile .label{font-size:10.5px;color:var(--muted);letter-spacing:0.06em;margin-bottom:6px;}
+.mini-tile .value{font-size:16px;font-weight:600;}
+
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(18,22,19,0.55);
+  display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;
+}
+.modal{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m);
+  padding:24px;max-width:360px;width:100%;box-shadow:var(--shadow);
+}
+.modal h2{font-family:var(--font-display);margin-top:0;font-size:18px;}
+.modal p{color:var(--muted);font-size:13px;line-height:1.7;}
+
+.toast{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:var(--radius-s);
+  font-size:13px;z-index:200;box-shadow:var(--shadow);font-family:var(--font-body);
+}
+
+.ai-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.ai-controls select{width:auto;padding:9px 10px;}
+.run-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--border);margin-right:6px;}
+.run-dot.on{background:var(--gain);box-shadow:0 0 0 3px var(--gain-soft);animation:pulse 1.4s infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+@media (prefers-reduced-motion: reduce){.run-dot.on{animation:none;}}
+.run-status{font-size:12px;color:var(--muted);display:flex;align-items:center;}
+.badge{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:0.04em;padding:2px 7px;border-radius:99px;font-family:var(--font-body);}
+.badge-buy{background:var(--gain-soft);color:var(--gain);}
+.badge-sell{background:var(--loss-soft);color:var(--loss);}
+.badge-hold{background:var(--surface-2);color:var(--muted);border:1px solid var(--border);}
+.weight-track{width:70px;height:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:99px;position:relative;overflow:hidden;}
+.weight-fill{position:absolute;top:0;bottom:0;width:2px;background:var(--muted);}
+.ai-log{list-style:none;margin:0;padding:0;max-height:280px;overflow-y:auto;}
+.ai-log li{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--border);font-size:12.5px;}
+.ai-log li:last-child{border-bottom:none;}
+.ai-log .step{color:var(--muted);font-family:var(--font-mono);font-size:11px;width:52px;flex:0 0 auto;}
+.ai-log .note{color:var(--muted);flex:1;}
+.ai-note{background:var(--gold-soft);border:1px solid var(--gold);color:var(--gold);border-radius:var(--radius-s);padding:10px 12px;font-size:12.5px;line-height:1.7;margin-bottom:14px;}
+
+@media (max-width:640px){
+  .stat-grid{grid-template-columns:repeat(2,1fr);}
+  .stat-tile{border-bottom:1px solid var(--border);}
+  .stat-tile:nth-child(2n){border-right:none;}
+  .masthead-row{align-items:flex-start;}
+  .masthead-total{text-align:left;}
+  .mini-grid{grid-template-columns:1fr;}
+}
+</style>
+
+<div class="masthead">
+  <div class="masthead-row">
+    <div>
+      <h1 class="brand">投資ノート</h1>
+      <span class="brand-sub">PORTFOLIO SIMULATOR — 仮想資金による運用記録</span>
+    </div>
+    <div class="masthead-total">
+      <span class="label">総資産 TOTAL</span>
+      <div class="num" id="headerTotal">¥0</div>
+    </div>
+  </div>
+</div>
+
+<nav class="tabbar" id="tabbar">
+  <button class="tab-btn active" data-tab="dashboard">ダッシュボード</button>
+  <button class="tab-btn" data-tab="holdings">保有銘柄</button>
+  <button class="tab-btn" data-tab="trade">売買</button>
+  <button class="tab-btn" data-tab="history">履歴</button>
+  <button class="tab-btn" data-tab="goal">目標</button>
+  <button class="tab-btn" data-tab="ai">AI運用</button>
+  <button class="tab-btn" data-tab="settings">設定</button>
+</nav>
+
+<main id="app">
+
+  <!-- ===== DASHBOARD ===== -->
+  <section class="tab-panel active" id="tab-dashboard">
+    <div class="stat-grid">
+      <div class="stat-tile">
+        <div class="label">総資産</div>
+        <div class="value num" id="statTotalAssets">¥0</div>
+        <div class="sub num" id="statTotalPL">±0 (0.0%)</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">現金残高</div>
+        <div class="value num" id="statCash">¥0</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">評価損益</div>
+        <div class="value num" id="statUnrealized">¥0</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">確定損益</div>
+        <div class="value num" id="statRealized">¥0</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title-row">
+        <h2>資産推移</h2>
+        <button class="btn" id="btnRecordSnapshot">今日の資産を記録</button>
+      </div>
+      <canvas id="netWorthChart" height="180"></canvas>
+      <p class="hint" id="netWorthHint"></p>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <h2>資産配分（銘柄別）</h2>
+        <canvas id="allocSymbolChart" height="220"></canvas>
+      </div>
+      <div class="card">
+        <h2>資産配分（資産クラス別）</h2>
+        <canvas id="allocClassChart" height="220"></canvas>
+      </div>
+    </div>
+
+    <div class="card" id="goalMiniCard" hidden>
+      <h2>目標達成度</h2>
+      <div class="progress-bar"><div class="progress-fill" id="goalMiniFill"></div></div>
+      <p class="hint num" id="goalMiniText"></p>
+    </div>
+  </section>
+
+  <!-- ===== HOLDINGS ===== -->
+  <section class="tab-panel" id="tab-holdings">
+    <div class="card">
+      <div class="card-title-row">
+        <h2>保有銘柄一覧</h2>
+        <button class="btn" id="btnRefreshCrypto">暗号資産の価格を自動取得</button>
+      </div>
+      <p class="hint">株式・投資信託などは価格を手動で入力してください（無料でCORS制限なく使える株価APIがないため、暗号資産のみ自動取得に対応しています）。</p>
+      <div class="table-wrap">
+        <table id="holdingsTable">
+          <thead>
+            <tr>
+              <th>銘柄</th><th>クラス</th><th>数量</th><th>平均取得単価</th>
+              <th>現在価格</th><th>評価額</th><th>評価損益</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="holdingsBody"></tbody>
+        </table>
+      </div>
+      <p class="empty-hint" id="holdingsEmpty">まだ保有銘柄がありません。「売買」タブから購入を記録してください。</p>
+    </div>
+  </section>
+
+  <!-- ===== TRADE ===== -->
+  <section class="tab-panel" id="tab-trade">
+    <div class="card">
+      <h2>売買を記録</h2>
+      <form id="tradeForm">
+        <div class="form-row">
+          <label>売買種別</label>
+          <div class="segmented">
+            <button type="button" class="seg-btn active" data-type="buy">買い</button>
+            <button type="button" class="seg-btn" data-type="sell">売り</button>
+          </div>
+        </div>
+
+        <div class="form-row" id="rowSymbolBuy">
+          <label for="tSymbol">銘柄コード / ティッカー</label>
+          <input type="text" id="tSymbol" placeholder="例: 7203, AAPL, BTC" autocomplete="off" list="symbolList">
+          <datalist id="symbolList"></datalist>
+        </div>
+        <div class="form-row" id="rowSymbolSell" hidden>
+          <label for="tSymbolSelect">保有銘柄から選択</label>
+          <select id="tSymbolSelect"></select>
+        </div>
+
+        <div class="form-row" id="rowName">
+          <label for="tName">銘柄名（任意）</label>
+          <input type="text" id="tName" placeholder="例: トヨタ自動車" style="font-family:var(--font-body)">
+        </div>
+
+        <div class="form-row" id="rowClass">
+          <label for="tClass">資産クラス</label>
+          <select id="tClass">
+            <option value="stock">株式</option>
+            <option value="fund">投資信託・ETF</option>
+            <option value="crypto">暗号資産</option>
+            <option value="bond">債券</option>
+            <option value="other">その他</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <label for="tQty">数量</label>
+          <input type="number" id="tQty" min="0" step="any" placeholder="0">
+        </div>
+        <div class="form-row">
+          <label for="tPrice">単価（1単位あたり）</label>
+          <input type="number" id="tPrice" min="0" step="any" placeholder="0">
+        </div>
+        <div class="form-row">
+          <label for="tDate">日付</label>
+          <input type="date" id="tDate">
+        </div>
+
+        <div class="form-row summary-row" id="tradeSummary"></div>
+
+        <button type="submit" class="btn btn-primary" id="tradeSubmitBtn">買いを記録する</button>
+        <p class="form-msg" id="tradeMsg"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- ===== HISTORY ===== -->
+  <section class="tab-panel" id="tab-history">
+    <div class="card">
+      <div class="card-title-row">
+        <h2>取引履歴</h2>
+        <select id="historyFilter" style="width:auto;">
+          <option value="all">すべて</option>
+          <option value="buy">買いのみ</option>
+          <option value="sell">売りのみ</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table id="historyTable">
+          <thead>
+            <tr><th>日付</th><th>種別</th><th>銘柄</th><th>数量</th><th>単価</th><th>金額</th><th>実現損益</th><th></th></tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+      <p class="empty-hint" id="historyEmpty">まだ取引履歴がありません。</p>
+    </div>
+  </section>
+
+  <!-- ===== GOAL ===== -->
+  <section class="tab-panel" id="tab-goal">
+    <div class="card">
+      <h2>目標金額の設定</h2>
+      <form id="goalForm">
+        <div class="form-row">
+          <label for="gTarget">目標金額（円）</label>
+          <input type="number" id="gTarget" min="0" step="1" placeholder="例: 10000000">
+        </div>
+        <div class="form-row">
+          <label for="gDate">目標達成日（任意）</label>
+          <input type="date" id="gDate">
+        </div>
+        <button type="submit" class="btn btn-primary">目標を保存</button>
+      </form>
+    </div>
+
+    <div class="card" id="goalDetailCard" hidden>
+      <h2>進捗状況</h2>
+      <div class="progress-bar large"><div class="progress-fill" id="goalDetailFill"></div></div>
+      <p class="hint num" id="goalDetailText"></p>
+      <div class="mini-grid">
+        <div class="mini-tile">
+          <div class="label">現在の総資産</div>
+          <div class="value num" id="goalCurrent">¥0</div>
+        </div>
+        <div class="mini-tile">
+          <div class="label">目標まで残り</div>
+          <div class="value num" id="goalRemaining">¥0</div>
+        </div>
+        <div class="mini-tile">
+          <div class="label">必要な月間積立目安</div>
+          <div class="value num" id="goalMonthly">-</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== AI RUN ===== -->
+  <section class="tab-panel" id="tab-ai">
+    <div class="ai-note">
+      これは学習型アルゴリズムが自分の仮想資金（あなたの保有資産とは別会計）で架空の5銘柄を自動売買する実験エリアです。値動きはランダムウォークによるシミュレーションで、実在の銘柄・株価ではありません。「学習」とは、移動平均のモメンタム判断が的中したかどうかを報酬として、銘柄ごとの信頼度（重み）を少しずつ調整する単純な適応アルゴリズムであり、対話するAIではありません。
+    </div>
+
+    <div class="card">
+      <div class="card-title-row">
+        <h2>操作</h2>
+        <span class="run-status"><span class="run-dot" id="aiRunDot"></span><span id="aiRunLabel">停止中</span></span>
+      </div>
+      <div class="ai-controls">
+        <button class="btn" id="btnAiStart">自動運転を開始</button>
+        <button class="btn" id="btnAiStop">停止</button>
+        <button class="btn" id="btnAiStep">1ステップ進める</button>
+        <select id="aiSpeed">
+          <option value="2000">速度: ゆっくり</option>
+          <option value="800" selected>速度: ふつう</option>
+          <option value="250">速度: 高速</option>
+        </select>
+        <button class="btn btn-danger" id="btnAiReset">学習をリセット</button>
+      </div>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-tile">
+        <div class="label">AIの総資産</div>
+        <div class="value num" id="aiTotalAssets">¥0</div>
+        <div class="sub num" id="aiTotalPL">±0 (0.0%)</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">経過ステップ</div>
+        <div class="value num" id="aiSteps">0</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">取引回数</div>
+        <div class="value num" id="aiTrades">0</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">勝率（決済分）</div>
+        <div class="value num" id="aiWinRate">-</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>AI資産推移</h2>
+      <canvas id="aiEquityChart" height="180"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>銘柄別ポジション・学習状況</h2>
+      <div class="table-wrap">
+        <table id="aiAssetsTable">
+          <thead>
+            <tr><th>銘柄</th><th>価格</th><th>保有数量</th><th>評価額</th><th>学習した信頼度</th><th>直近の判断</th></tr>
+          </thead>
+          <tbody id="aiAssetsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>判断ログ</h2>
+      <ul class="ai-log" id="aiLog"></ul>
+      <p class="empty-hint" id="aiLogEmpty">まだ判断がありません。「自動運転を開始」または「1ステップ進める」を押してください。</p>
+    </div>
+  </section>
+
+  <!-- ===== SETTINGS ===== -->
+  <section class="tab-panel" id="tab-settings">
+    <div class="card">
+      <h2>現金残高の調整</h2>
+      <p class="hint">入出金があった場合など、現金残高を直接調整できます。</p>
+      <form id="cashForm">
+        <div class="form-row">
+          <label for="cashAmount">増減額（円）※マイナス可</label>
+          <input type="number" id="cashAmount" step="1" placeholder="例: 100000 または -50000">
+        </div>
+        <div class="form-row">
+          <label for="cashNote">メモ（任意）</label>
+          <input type="text" id="cashNote" placeholder="例: 追加入金" style="font-family:var(--font-body)">
+        </div>
+        <button type="submit" class="btn btn-primary">現金残高を更新</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>データのバックアップ</h2>
+      <p class="hint">このページはブラウザ内（localStorage）にのみデータを保存します。端末やブラウザを変えると引き継がれないため、定期的にエクスポートして保管することをおすすめします。</p>
+      <div class="btn-row">
+        <button class="btn" id="btnExport" disabled>データをエクスポート（JSON）</button>
+        <label class="btn btn-file">
+          データをインポート
+          <input type="file" id="btnImport" accept="application/json" hidden>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>危険な操作</h2>
+      <button class="btn btn-danger" id="btnReset">すべてのデータをリセット</button>
+    </div>
+  </section>
+
+</main>
+
+<div class="modal-overlay" id="setupModal" hidden>
+  <div class="modal">
+    <h2>ようこそ</h2>
+    <p>まずは初期の現金残高（元手資金）を入力してください。</p>
+    <div class="form-row">
+      <label for="initCash">初期資金（円）</label>
+      <input type="number" id="initCash" value="1000000" min="0" step="1">
+    </div>
+    <button class="btn btn-primary" id="btnStartSetup">シミュレーションを始める</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirmModal" hidden>
+  <div class="modal">
+    <h2 id="confirmTitle">確認</h2>
+    <p id="confirmMessage"></p>
+    <div class="btn-row">
+      <button class="btn" id="confirmCancelBtn" style="flex:1;">キャンセル</button>
+      <button class="btn btn-danger" id="confirmOkBtn" style="flex:1;">実行する</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const STORAGE_KEY = 'tousiSimState_v1';
+
+const CRYPTO_ID_MAP = {
+  BTC: 'bitcoin', ETH: 'ethereum', XRP: 'ripple', ADA: 'cardano',
+  SOL: 'solana', DOGE: 'dogecoin', DOT: 'polkadot', LTC: 'litecoin',
+  BCH: 'bitcoin-cash', LINK: 'chainlink', MATIC: 'matic-network',
+  AVAX: 'avalanche-2', TRX: 'tron', BNB: 'binancecoin', USDT: 'tether',
+  USDC: 'usd-coin', SHIB: 'shiba-inu', ATOM: 'cosmos', XLM: 'stellar',
+  ETC: 'ethereum-classic',
+};
+
+const ASSET_CLASS_LABEL = {
+  stock: '株式', fund: '投信/ETF', crypto: '暗号資産', bond: '債券', other: 'その他',
+};
+
+let state = null;
+let netWorthChart = null;
+let allocSymbolChart = null;
+let allocClassChart = null;
+let currentTradeType = 'buy';
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function todayStr() {
+  const d = new Date();
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function formatYen(n) {
+  if (!isFinite(n)) n = 0;
+  return '¥' + Math.round(n).toLocaleString('ja-JP');
+}
+
+function formatPct(n) {
+  if (!isFinite(n)) n = 0;
+  const sign = n > 0 ? '+' : '';
+  return sign + n.toFixed(1) + '%';
+}
+
+function signClass(n) {
+  return n > 0 ? 'gain' : (n < 0 ? 'loss' : '');
+}
+
+let confirmCallback = null;
+
+function showConfirm(message, onConfirm) {
+  confirmCallback = onConfirm;
+  document.getElementById('confirmMessage').textContent = message;
+  document.getElementById('confirmModal').hidden = false;
+  document.getElementById('confirmCancelBtn').focus();
+}
+
+function setupConfirmModal() {
+  document.getElementById('confirmCancelBtn').addEventListener('click', () => {
+    confirmCallback = null;
+    document.getElementById('confirmModal').hidden = true;
+  });
+  document.getElementById('confirmOkBtn').addEventListener('click', () => {
+    document.getElementById('confirmModal').hidden = true;
+    const cb = confirmCallback;
+    confirmCallback = null;
+    if (cb) cb();
+  });
+}
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { el.hidden = true; }, 2600);
+}
+
+function defaultState(initialCash) {
+  return {
+    version: 1,
+    cash: initialCash,
+    initialCash: initialCash,
+    holdings: [],
+    transactions: [],
+    priceHistory: {},
+    netWorthHistory: [],
+    cashAdjustments: [],
+    goal: { targetAmount: null, targetDate: null },
+    ai: defaultAiState(),
+  };
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch (e) {
+    console.error('failed to load state', e);
+    return null;
+  }
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+// ---------- computed values ----------
+
+function holdingValue(h) {
+  return h.quantity * (h.currentPrice || 0);
+}
+
+function totalHoldingsValue() {
+  return state.holdings.reduce((s, h) => s + holdingValue(h), 0);
+}
+
+function totalAssets() {
+  return state.cash + totalHoldingsValue();
+}
+
+function unrealizedPL() {
+  return state.holdings.reduce((s, h) => s + (h.currentPrice - h.avgCost) * h.quantity, 0);
+}
+
+function realizedPL() {
+  return state.transactions
+    .filter(t => t.type === 'sell')
+    .reduce((s, t) => s + (t.realizedPL || 0), 0);
+}
+
+function totalContributions() {
+  return state.initialCash + state.cashAdjustments.reduce((s, c) => s + c.amount, 0);
+}
+
+function totalPL() {
+  return totalAssets() - totalContributions();
+}
+
+function totalPLPct() {
+  const c = totalContributions();
+  if (c <= 0) return 0;
+  return (totalPL() / c) * 100;
+}
+
+// ---------- rendering ----------
+
+function render() {
+  renderHeader();
+  renderDashboard();
+  renderHoldings();
+  renderTradeForm();
+  renderHistory();
+  renderGoal();
+  renderAiTab();
+}
+
+function renderHeader() {
+  document.getElementById('headerTotal').textContent = formatYen(totalAssets());
+}
+
+function renderDashboard() {
+  document.getElementById('statTotalAssets').textContent = formatYen(totalAssets());
+  const plEl = document.getElementById('statTotalPL');
+  const pl = totalPL();
+  plEl.textContent = `${pl >= 0 ? '+' : ''}${formatYen(pl)} (${formatPct(totalPLPct())})`;
+  plEl.className = 'sub num ' + signClass(pl);
+
+  document.getElementById('statCash').textContent = formatYen(state.cash);
+
+  const uEl = document.getElementById('statUnrealized');
+  const u = unrealizedPL();
+  uEl.textContent = formatYen(u);
+  uEl.className = 'value num ' + signClass(u);
+
+  const rEl = document.getElementById('statRealized');
+  const r = realizedPL();
+  rEl.textContent = formatYen(r);
+  rEl.className = 'value num ' + signClass(r);
+
+  renderNetWorthChart();
+  renderAllocCharts();
+  renderGoalMini();
+}
+
+function renderNetWorthChart() {
+  const hint = document.getElementById('netWorthHint');
+  const ctx = document.getElementById('netWorthChart').getContext('2d');
+  const history = [...state.netWorthHistory].sort((a, b) => a.date.localeCompare(b.date));
+
+  if (history.length === 0) {
+    hint.textContent = '「今日の資産を記録」を押すと、資産推移グラフに記録されます。';
+  } else {
+    hint.textContent = `記録件数: ${history.length}件`;
+  }
+
+  const labels = history.map(h => h.date);
+  const values = history.map(h => h.value);
+  const goalTarget = state.goal.targetAmount;
+
+  const accent = cssVar('--accent');
+  const gold = cssVar('--gold');
+  const muted = cssVar('--muted');
+  const border = cssVar('--border');
+  const ink = cssVar('--ink');
+
+  const datasets = [{
+    label: '総資産',
+    data: values,
+    borderColor: accent,
+    backgroundColor: accent + '22',
+    fill: true,
+    tension: 0.25,
+    pointRadius: 3,
+    pointBackgroundColor: accent,
+  }];
+
+  if (goalTarget) {
+    datasets.push({
+      label: '目標金額',
+      data: labels.map(() => goalTarget),
+      borderColor: gold,
+      borderDash: [6, 6],
+      pointRadius: 0,
+      fill: false,
+    });
+  }
+
+  if (netWorthChart) netWorthChart.destroy();
+  netWorthChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: !!goalTarget, labels: { color: ink, font: { family: "'Zen Kaku Gothic New', sans-serif", size: 11 } } },
+      },
+      scales: {
+        x: { grid: { color: border }, ticks: { color: muted, font: { family: "'JetBrains Mono', monospace", size: 10 } } },
+        y: { grid: { color: border }, ticks: { color: muted, font: { family: "'JetBrains Mono', monospace", size: 10 }, callback: v => formatYen(v) } },
+      },
+    },
+  });
+}
+
+const PALETTE = ['#1F6F52', '#A9781F', '#B14B36', '#3B6E71', '#7A6A3F', '#5B5F86', '#8C5A3C', '#4F7A63'];
+
+function renderAllocCharts() {
+  const symCtx = document.getElementById('allocSymbolChart').getContext('2d');
+  const clsCtx = document.getElementById('allocClassChart').getContext('2d');
+  const ink = cssVar('--ink');
+
+  const symLabels = [];
+  const symValues = [];
+  state.holdings.forEach(h => {
+    const v = holdingValue(h);
+    if (v > 0) { symLabels.push(h.symbol); symValues.push(v); }
+  });
+  if (state.cash > 0) { symLabels.push('現金'); symValues.push(state.cash); }
+
+  const clsMap = {};
+  state.holdings.forEach(h => {
+    const v = holdingValue(h);
+    clsMap[h.assetClass] = (clsMap[h.assetClass] || 0) + v;
+  });
+  if (state.cash > 0) clsMap['cash'] = (clsMap['cash'] || 0) + state.cash;
+  const clsLabels = Object.keys(clsMap).map(k => k === 'cash' ? '現金' : ASSET_CLASS_LABEL[k] || k);
+  const clsValues = Object.values(clsMap);
+
+  if (allocSymbolChart) allocSymbolChart.destroy();
+  if (allocClassChart) allocClassChart.destroy();
+
+  const opts = {
+    responsive: true,
+    plugins: {
+      legend: { position: 'bottom', labels: { boxWidth: 12, color: ink, font: { family: "'Zen Kaku Gothic New', sans-serif", size: 11 } } },
+      tooltip: { callbacks: { label: ctx => `${ctx.label}: ${formatYen(ctx.raw)}` } },
+    },
+  };
+
+  allocSymbolChart = new Chart(symCtx, {
+    type: 'doughnut',
+    data: {
+      labels: symLabels.length ? symLabels : ['データなし'],
+      datasets: [{ data: symValues.length ? symValues : [1], backgroundColor: PALETTE, borderColor: cssVar('--surface'), borderWidth: 2 }],
+    },
+    options: opts,
+  });
+
+  allocClassChart = new Chart(clsCtx, {
+    type: 'doughnut',
+    data: {
+      labels: clsLabels.length ? clsLabels : ['データなし'],
+      datasets: [{ data: clsValues.length ? clsValues : [1], backgroundColor: PALETTE, borderColor: cssVar('--surface'), borderWidth: 2 }],
+    },
+    options: opts,
+  });
+}
+
+function renderGoalMini() {
+  const card = document.getElementById('goalMiniCard');
+  if (!state.goal.targetAmount) { card.hidden = true; return; }
+  card.hidden = false;
+  const pct = Math.min(100, (totalAssets() / state.goal.targetAmount) * 100);
+  document.getElementById('goalMiniFill').style.width = pct.toFixed(1) + '%';
+  document.getElementById('goalMiniText').textContent =
+    `${formatYen(totalAssets())} / ${formatYen(state.goal.targetAmount)}（${pct.toFixed(1)}%）`;
+}
+
+function renderHoldings() {
+  const body = document.getElementById('holdingsBody');
+  const empty = document.getElementById('holdingsEmpty');
+  body.innerHTML = '';
+  if (state.holdings.length === 0) {
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  state.holdings.forEach(h => {
+    const value = holdingValue(h);
+    const pl = (h.currentPrice - h.avgCost) * h.quantity;
+    const plPct = h.avgCost > 0 ? ((h.currentPrice - h.avgCost) / h.avgCost) * 100 : 0;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(h.symbol)}</strong>${h.name ? `<span class="sub-line">${escapeHtml(h.name)}</span>` : ''}</td>
+      <td>${ASSET_CLASS_LABEL[h.assetClass] || h.assetClass}</td>
+      <td class="num">${h.quantity.toLocaleString('ja-JP')}</td>
+      <td class="num">${formatYen(h.avgCost)}</td>
+      <td><input type="number" class="price-input num" data-id="${h.id}" value="${h.currentPrice}" min="0" step="any" style="width:110px;padding:6px 8px;border:1px solid var(--border);border-radius:3px;background:var(--surface-2);color:var(--ink);"></td>
+      <td class="num">${formatYen(value)}</td>
+      <td class="num ${signClass(pl)}">${formatYen(pl)}<span class="sub-line num">${formatPct(plPct)}</span></td>
+      <td></td>
+    `;
+    body.appendChild(tr);
+  });
+
+  body.querySelectorAll('.price-input').forEach(inp => {
+    inp.addEventListener('change', (e) => {
+      const id = e.target.dataset.id;
+      const price = parseFloat(e.target.value);
+      if (isNaN(price) || price < 0) return;
+      updateHoldingPrice(id, price);
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function updateHoldingPrice(id, price) {
+  const h = state.holdings.find(x => x.id === id);
+  if (!h) return;
+  h.currentPrice = price;
+  pushPriceHistory(h.symbol, price);
+  saveState();
+  render();
+  showToast(`${h.symbol} の価格を更新しました`);
+}
+
+function pushPriceHistory(symbol, price) {
+  if (!state.priceHistory[symbol]) state.priceHistory[symbol] = [];
+  const today = todayStr();
+  const arr = state.priceHistory[symbol];
+  const existingIdx = arr.findIndex(p => p.date === today);
+  if (existingIdx >= 0) arr[existingIdx].price = price;
+  else arr.push({ date: today, price });
+}
+
+function renderTradeForm() {
+  const symbolList = document.getElementById('symbolList');
+  symbolList.innerHTML = state.holdings.map(h => `<option value="${escapeHtml(h.symbol)}">`).join('');
+
+  const sellSelect = document.getElementById('tSymbolSelect');
+  sellSelect.innerHTML = state.holdings.map(h =>
+    `<option value="${escapeHtml(h.symbol)}">${escapeHtml(h.symbol)}（保有: ${h.quantity.toLocaleString('ja-JP')}）</option>`
+  ).join('');
+
+  document.getElementById('tDate').value = document.getElementById('tDate').value || todayStr();
+  updateTradeSummary();
+}
+
+function updateTradeSummary() {
+  const qty = parseFloat(document.getElementById('tQty').value) || 0;
+  const price = parseFloat(document.getElementById('tPrice').value) || 0;
+  const amount = qty * price;
+  const summaryEl = document.getElementById('tradeSummary');
+
+  if (currentTradeType === 'buy') {
+    const after = state.cash - amount;
+    summaryEl.textContent = `合計金額: ${formatYen(amount)}　→ 購入後の現金残高: ${formatYen(after)}`;
+  } else {
+    const after = state.cash + amount;
+    summaryEl.textContent = `合計金額: ${formatYen(amount)}　→ 売却後の現金残高: ${formatYen(after)}`;
+  }
+}
+
+function renderHistory() {
+  const body = document.getElementById('historyBody');
+  const empty = document.getElementById('historyEmpty');
+  const filter = document.getElementById('historyFilter').value;
+
+  let list = [...state.transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  if (filter !== 'all') list = list.filter(t => t.type === filter);
+
+  body.innerHTML = '';
+  if (list.length === 0) {
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  list.forEach(t => {
+    const tr = document.createElement('tr');
+    const plCell = t.type === 'sell'
+      ? `<td class="num ${signClass(t.realizedPL)}">${formatYen(t.realizedPL)}</td>`
+      : `<td class="num">-</td>`;
+    tr.innerHTML = `
+      <td class="num">${t.date}</td>
+      <td>${t.type === 'buy' ? '買い' : '売り'}</td>
+      <td>${escapeHtml(t.symbol)}</td>
+      <td class="num">${t.quantity.toLocaleString('ja-JP')}</td>
+      <td class="num">${formatYen(t.price)}</td>
+      <td class="num">${formatYen(t.amount)}</td>
+      ${plCell}
+      <td><button class="icon-btn" data-id="${t.id}" title="削除して取り消す">×</button></td>
+    `;
+    body.appendChild(tr);
+  });
+
+  body.querySelectorAll('.icon-btn').forEach(btn => {
+    btn.addEventListener('click', () => deleteTransaction(btn.dataset.id));
+  });
+}
+
+function deleteTransaction(id) {
+  const t = state.transactions.find(x => x.id === id);
+  if (!t) return;
+  showConfirm(
+    `${t.date} の ${t.symbol} ${t.type === 'buy' ? '買い' : '売り'}取引を取り消しますか？\n（この操作は現金・保有数量を巻き戻します）`,
+    () => deleteTransactionConfirmed(id)
+  );
+}
+
+function deleteTransactionConfirmed(id) {
+  const t = state.transactions.find(x => x.id === id);
+  if (!t) return;
+  const h = state.holdings.find(x => x.symbol === t.symbol);
+  if (t.type === 'buy') {
+    state.cash += t.amount;
+    if (h) {
+      const newQty = h.quantity - t.quantity;
+      if (newQty <= 0) {
+        state.holdings = state.holdings.filter(x => x.id !== h.id);
+      } else {
+        const totalCostBefore = h.avgCost * h.quantity;
+        const remainingCost = totalCostBefore - t.amount;
+        h.quantity = newQty;
+        h.avgCost = remainingCost / newQty;
+      }
+    }
+  } else {
+    state.cash -= t.amount;
+    if (h) {
+      h.quantity += t.quantity;
+    } else {
+      state.holdings.push({
+        id: uid(), symbol: t.symbol, name: t.name || '', assetClass: t.assetClass || 'other',
+        quantity: t.quantity, avgCost: t.price, currentPrice: t.price,
+      });
+    }
+  }
+  state.transactions = state.transactions.filter(x => x.id !== id);
+  saveState();
+  render();
+  showToast('取引を取り消しました');
+}
+
+function renderGoal() {
+  document.getElementById('gTarget').value = state.goal.targetAmount || '';
+  document.getElementById('gDate').value = state.goal.targetDate || '';
+
+  const detailCard = document.getElementById('goalDetailCard');
+  if (!state.goal.targetAmount) { detailCard.hidden = true; return; }
+  detailCard.hidden = false;
+
+  const current = totalAssets();
+  const target = state.goal.targetAmount;
+  const pct = Math.min(100, (current / target) * 100);
+  document.getElementById('goalDetailFill').style.width = pct.toFixed(1) + '%';
+  document.getElementById('goalDetailText').textContent = `達成率 ${pct.toFixed(1)}%`;
+  document.getElementById('goalCurrent').textContent = formatYen(current);
+  document.getElementById('goalRemaining').textContent = formatYen(Math.max(0, target - current));
+
+  const monthlyEl = document.getElementById('goalMonthly');
+  if (state.goal.targetDate) {
+    const now = new Date();
+    const end = new Date(state.goal.targetDate);
+    const months = Math.max(1, (end.getFullYear() - now.getFullYear()) * 12 + (end.getMonth() - now.getMonth()));
+    const remaining = Math.max(0, target - current);
+    monthlyEl.textContent = remaining > 0 ? formatYen(remaining / months) + ' /月' : '達成済み';
+  } else {
+    monthlyEl.textContent = '目標日未設定';
+  }
+}
+
+// ---------- trading logic ----------
+
+function doBuy({ symbol, name, assetClass, quantity, price, date }) {
+  const amount = quantity * price;
+  if (amount > state.cash + 1e-6) {
+    return { ok: false, msg: `現金残高が不足しています（残高: ${formatYen(state.cash)}）` };
+  }
+  state.cash -= amount;
+
+  let h = state.holdings.find(x => x.symbol.toUpperCase() === symbol.toUpperCase());
+  if (h) {
+    const totalCost = h.avgCost * h.quantity + amount;
+    h.quantity += quantity;
+    h.avgCost = totalCost / h.quantity;
+    h.currentPrice = price;
+    if (name) h.name = name;
+  } else {
+    h = { id: uid(), symbol, name: name || '', assetClass, quantity, avgCost: price, currentPrice: price };
+    state.holdings.push(h);
+  }
+  pushPriceHistory(symbol, price);
+
+  state.transactions.push({
+    id: uid(), date, type: 'buy', symbol, name: name || '', assetClass,
+    quantity, price, amount, realizedPL: null,
+  });
+
+  saveState();
+  return { ok: true };
+}
+
+function doSell({ symbol, quantity, price, date }) {
+  const h = state.holdings.find(x => x.symbol.toUpperCase() === symbol.toUpperCase());
+  if (!h) return { ok: false, msg: '保有していない銘柄です' };
+  if (quantity > h.quantity + 1e-9) return { ok: false, msg: `保有数量（${h.quantity}）を超えています` };
+
+  const amount = quantity * price;
+  const realized = (price - h.avgCost) * quantity;
+
+  state.cash += amount;
+  h.quantity -= quantity;
+  h.currentPrice = price;
+  if (h.quantity <= 1e-9) {
+    state.holdings = state.holdings.filter(x => x.id !== h.id);
+  }
+  pushPriceHistory(symbol, price);
+
+  state.transactions.push({
+    id: uid(), date, type: 'sell', symbol, name: h.name, assetClass: h.assetClass,
+    quantity, price, amount, realizedPL: realized,
+  });
+
+  saveState();
+  return { ok: true };
+}
+
+// ---------- crypto auto price fetch ----------
+
+async function fetchCryptoPrices() {
+  const cryptoHoldings = state.holdings.filter(h => h.assetClass === 'crypto');
+  if (cryptoHoldings.length === 0) {
+    showToast('暗号資産の保有銘柄がありません');
+    return;
+  }
+  const idPairs = cryptoHoldings
+    .map(h => ({ h, id: CRYPTO_ID_MAP[h.symbol.toUpperCase()] }))
+    .filter(x => x.id);
+
+  if (idPairs.length === 0) {
+    showToast('対応銘柄が見つかりません（主要な暗号資産のティッカーのみ対応）');
+    return;
+  }
+
+  const ids = [...new Set(idPairs.map(x => x.id))].join(',');
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=jpy`;
+
+  showToast('価格を取得中...');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    let updated = 0;
+    idPairs.forEach(({ h, id }) => {
+      const price = data[id]?.jpy;
+      if (typeof price === 'number') {
+        h.currentPrice = price;
+        pushPriceHistory(h.symbol, price);
+        updated++;
+      }
+    });
+    saveState();
+    render();
+    showToast(updated > 0 ? `${updated}件の価格を更新しました` : '価格を取得できませんでした');
+  } catch (e) {
+    console.error(e);
+    showToast('自動取得に失敗しました。手動で価格を入力してください。');
+  }
+}
+
+// ---------- AI auto-trading sandbox ----------
+// A small self-contained learner: it trades 5 fictional symbols with a
+// simulated random-walk price. Each symbol has a "weight" that is nudged up
+// when trusting the moving-average momentum signal paid off, and down when
+// it didn't -- a simple adaptive/reinforcement-style rule, not a neural net.
+
+const AI_UNIVERSE = [
+  { symbol: 'ALPHA', name: 'アルファ工業' },
+  { symbol: 'NEXUS', name: 'ネクサス通信' },
+  { symbol: 'SORA', name: 'ソラ・フーズ' },
+  { symbol: 'KIBO', name: 'キボウ製薬' },
+  { symbol: 'VESTA', name: 'ベスタ重工' },
+];
+
+let aiTimer = null;
+
+function gaussianRandom() {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function defaultAiState() {
+  const assets = {};
+  AI_UNIVERSE.forEach(s => {
+    assets[s.symbol] = {
+      name: s.name,
+      price: 800 + Math.random() * 3200,
+      drift: (Math.random() - 0.48) * 0.0012,
+      vol: 0.012 + Math.random() * 0.02,
+      history: [],
+      weight: 0,
+      qty: 0,
+      avgCost: 0,
+      lastAction: 'hold',
+      lastMomentum: 0,
+    };
+  });
+  return {
+    running: false,
+    tickMs: 800,
+    step: 0,
+    cash: 1000000,
+    initialCash: 1000000,
+    assets,
+    equityHistory: [{ step: 0, value: 1000000 }],
+    log: [],
+    trades: 0,
+    wins: 0,
+    closedTrades: 0,
+  };
+}
+
+function aiTotalAssets() {
+  const ai = state.ai;
+  let v = ai.cash;
+  Object.values(ai.assets).forEach(a => { v += a.qty * a.price; });
+  return v;
+}
+
+function aiTick() {
+  if (!state || !state.ai) return;
+  const ai = state.ai;
+  ai.step++;
+  const epsilon = Math.max(0.04, 0.35 * Math.pow(0.994, ai.step));
+  const lr = 0.6;
+
+  Object.entries(ai.assets).forEach(([symbol, a]) => {
+    const prevPrice = a.price;
+
+    // decide using momentum known BEFORE this tick's price move
+    a.history.push(prevPrice);
+    if (a.history.length > 40) a.history.shift();
+    const shortMA = avgLast(a.history, 5);
+    const longMA = avgLast(a.history, 20);
+    const momentum = (shortMA != null && longMA != null && longMA > 0) ? (shortMA - longMA) / longMA : 0;
+    const score = momentum * (1 + a.weight);
+
+    let action = 'hold';
+    const explore = Math.random() < epsilon;
+    if (explore) {
+      action = ['buy', 'sell', 'hold'][Math.floor(Math.random() * 3)];
+    } else if (score > 0.003) {
+      action = 'buy';
+    } else if (score < -0.003 && a.qty > 0) {
+      action = 'sell';
+    }
+
+    if (action === 'buy') {
+      const budget = Math.min(ai.cash * 0.18, ai.cash);
+      const qty = budget > prevPrice ? Math.floor(budget / prevPrice) : 0;
+      if (qty > 0) {
+        const cost = qty * prevPrice;
+        ai.cash -= cost;
+        const totalCost = a.avgCost * a.qty + cost;
+        a.qty += qty;
+        a.avgCost = totalCost / a.qty;
+        ai.trades++;
+        pushAiLog(ai, symbol, 'buy', qty, prevPrice, `モメンタム${formatPct(momentum * 100)} / 信頼度${a.weight.toFixed(2)}`);
+      }
+    } else if (action === 'sell' && a.qty > 0) {
+      const qty = a.qty;
+      const proceeds = qty * prevPrice;
+      ai.cash += proceeds;
+      const won = prevPrice > a.avgCost;
+      ai.closedTrades++;
+      if (won) ai.wins++;
+      ai.trades++;
+      pushAiLog(ai, symbol, 'sell', qty, prevPrice, `${won ? '含み益で決済' : '含み損で決済'} / 信頼度${a.weight.toFixed(2)}`);
+      a.qty = 0;
+      a.avgCost = 0;
+    }
+    a.lastAction = action;
+    a.lastMomentum = momentum;
+
+    // advance price (random walk)
+    const nextPrice = Math.max(1, prevPrice * Math.exp(a.drift + a.vol * gaussianRandom()));
+    const realizedReturn = (nextPrice - prevPrice) / prevPrice;
+    a.price = nextPrice;
+
+    // learning update: reward trusting momentum when it predicted the move correctly
+    const predictedDir = Math.sign(momentum);
+    const actualDir = Math.sign(realizedReturn);
+    const agreement = predictedDir * actualDir;
+    a.weight += lr * agreement * Math.abs(realizedReturn) * 40;
+    a.weight = Math.max(-3, Math.min(3, a.weight));
+  });
+
+  ai.equityHistory.push({ step: ai.step, value: aiTotalAssets() });
+  if (ai.equityHistory.length > 400) ai.equityHistory.shift();
+
+  saveState();
+  renderAiTab();
+}
+
+function avgLast(arr, n) {
+  if (arr.length < n) return null;
+  const slice = arr.slice(-n);
+  return slice.reduce((s, v) => s + v, 0) / slice.length;
+}
+
+function pushAiLog(ai, symbol, action, qty, price, note) {
+  ai.log.push({ step: ai.step, symbol, action, qty, price, note });
+  if (ai.log.length > 60) ai.log.shift();
+}
+
+function startAi() {
+  if (aiTimer) return;
+  state.ai.running = true;
+  aiTimer = setInterval(aiTick, state.ai.tickMs);
+  saveState();
+  renderAiTab();
+}
+
+function stopAi() {
+  if (aiTimer) { clearInterval(aiTimer); aiTimer = null; }
+  state.ai.running = false;
+  saveState();
+  renderAiTab();
+}
+
+let aiEquityChart = null;
+
+function renderAiTab() {
+  const ai = state.ai;
+  const total = aiTotalAssets();
+  const pl = total - ai.initialCash;
+  const plPct = ai.initialCash > 0 ? (pl / ai.initialCash) * 100 : 0;
+
+  document.getElementById('aiTotalAssets').textContent = formatYen(total);
+  const plEl = document.getElementById('aiTotalPL');
+  plEl.textContent = `${pl >= 0 ? '+' : ''}${formatYen(pl)} (${formatPct(plPct)})`;
+  plEl.className = 'sub num ' + signClass(pl);
+  document.getElementById('aiSteps').textContent = ai.step.toLocaleString('ja-JP');
+  document.getElementById('aiTrades').textContent = ai.trades.toLocaleString('ja-JP');
+  document.getElementById('aiWinRate').textContent = ai.closedTrades > 0 ? ((ai.wins / ai.closedTrades) * 100).toFixed(1) + '%' : '-';
+
+  document.getElementById('aiRunDot').className = 'run-dot' + (ai.running ? ' on' : '');
+  document.getElementById('aiRunLabel').textContent = ai.running ? '自動運転中' : '停止中';
+  document.getElementById('btnAiStart').disabled = ai.running;
+  document.getElementById('btnAiStop').disabled = !ai.running;
+
+  const body = document.getElementById('aiAssetsBody');
+  body.innerHTML = '';
+  Object.entries(ai.assets).forEach(([symbol, a]) => {
+    const value = a.qty * a.price;
+    const weightPct = ((a.weight + 3) / 6) * 100;
+    const badgeClass = a.lastAction === 'buy' ? 'badge-buy' : (a.lastAction === 'sell' ? 'badge-sell' : 'badge-hold');
+    const badgeLabel = a.lastAction === 'buy' ? '買い' : (a.lastAction === 'sell' ? '売り' : '様子見');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(symbol)}</strong><span class="sub-line">${escapeHtml(a.name)}</span></td>
+      <td class="num">${formatYen(a.price)}</td>
+      <td class="num">${a.qty.toLocaleString('ja-JP')}</td>
+      <td class="num">${formatYen(value)}</td>
+      <td><div class="weight-track"><div class="weight-fill" style="left:${weightPct}%;background:${a.weight >= 0 ? 'var(--gain)' : 'var(--loss)'}"></div></div></td>
+      <td><span class="badge ${badgeClass}">${badgeLabel}</span></td>
+    `;
+    body.appendChild(tr);
+  });
+
+  const logList = document.getElementById('aiLog');
+  const logEmpty = document.getElementById('aiLogEmpty');
+  const entries = [...ai.log].reverse().slice(0, 40);
+  logList.innerHTML = entries.map(e => `
+    <li>
+      <span class="step">#${e.step}</span>
+      <span class="badge ${e.action === 'buy' ? 'badge-buy' : 'badge-sell'}">${e.action === 'buy' ? '買い' : '売り'}</span>
+      <strong>${escapeHtml(e.symbol)}</strong>
+      <span class="num">${e.qty.toLocaleString('ja-JP')}株 @ ${formatYen(e.price)}</span>
+      <span class="note">${escapeHtml(e.note)}</span>
+    </li>
+  `).join('');
+  logEmpty.style.display = entries.length ? 'none' : 'block';
+
+  const ctx = document.getElementById('aiEquityChart').getContext('2d');
+  const accent = cssVar('--accent');
+  const muted = cssVar('--muted');
+  const border = cssVar('--border');
+  const ink = cssVar('--ink');
+  if (aiEquityChart) aiEquityChart.destroy();
+  aiEquityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: ai.equityHistory.map(h => h.step),
+      datasets: [{
+        label: 'AI資産',
+        data: ai.equityHistory.map(h => h.value),
+        borderColor: accent,
+        backgroundColor: accent + '22',
+        fill: true,
+        tension: 0.2,
+        pointRadius: 0,
+        borderWidth: 1.5,
+      }],
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: border }, ticks: { color: muted, maxTicksLimit: 8, font: { family: "'JetBrains Mono', monospace", size: 10 } } },
+        y: { grid: { color: border }, ticks: { color: muted, font: { family: "'JetBrains Mono', monospace", size: 10 }, callback: v => formatYen(v) } },
+      },
+    },
+  });
+}
+
+function setupAiActions() {
+  document.getElementById('btnAiStart').addEventListener('click', startAi);
+  document.getElementById('btnAiStop').addEventListener('click', stopAi);
+  document.getElementById('btnAiStep').addEventListener('click', aiTick);
+  document.getElementById('aiSpeed').addEventListener('change', (e) => {
+    state.ai.tickMs = parseInt(e.target.value, 10);
+    saveState();
+    if (aiTimer) { clearInterval(aiTimer); aiTimer = setInterval(aiTick, state.ai.tickMs); }
+  });
+  document.getElementById('btnAiReset').addEventListener('click', () => {
+    showConfirm('AIの学習内容と仮想資金をリセットします。よろしいですか？', () => {
+      stopAi();
+      state.ai = defaultAiState();
+      saveState();
+      renderAiTab();
+      showToast('AIをリセットしました');
+    });
+  });
+}
+
+// ---------- events ----------
+
+function setupTabs() {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      render();
+    });
+  });
+}
+
+function setupTradeForm() {
+  document.querySelectorAll('.seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentTradeType = btn.dataset.type;
+      const isBuy = currentTradeType === 'buy';
+      document.getElementById('rowSymbolBuy').hidden = !isBuy;
+      document.getElementById('rowSymbolSell').hidden = isBuy;
+      document.getElementById('rowName').hidden = !isBuy;
+      document.getElementById('rowClass').hidden = !isBuy;
+      document.getElementById('tradeSubmitBtn').textContent = isBuy ? '買いを記録する' : '売りを記録する';
+      updateTradeSummary();
+    });
+  });
+
+  ['tQty', 'tPrice'].forEach(id => {
+    document.getElementById(id).addEventListener('input', updateTradeSummary);
+  });
+
+  document.getElementById('tSymbol').addEventListener('change', (e) => {
+    const sym = e.target.value.trim();
+    const h = state.holdings.find(x => x.symbol.toUpperCase() === sym.toUpperCase());
+    if (h) {
+      document.getElementById('tName').value = h.name || '';
+      document.getElementById('tClass').value = h.assetClass;
+    }
+  });
+
+  document.getElementById('tradeForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const msgEl = document.getElementById('tradeMsg');
+    msgEl.textContent = '';
+    msgEl.className = 'form-msg';
+
+    const quantity = parseFloat(document.getElementById('tQty').value);
+    const price = parseFloat(document.getElementById('tPrice').value);
+    const date = document.getElementById('tDate').value || todayStr();
+
+    if (!quantity || quantity <= 0) { msgEl.textContent = '数量を正しく入力してください'; msgEl.classList.add('error'); return; }
+    if (!price || price <= 0) { msgEl.textContent = '単価を正しく入力してください'; msgEl.classList.add('error'); return; }
+
+    let result;
+    if (currentTradeType === 'buy') {
+      const symbol = document.getElementById('tSymbol').value.trim();
+      if (!symbol) { msgEl.textContent = '銘柄コードを入力してください'; msgEl.classList.add('error'); return; }
+      const name = document.getElementById('tName').value.trim();
+      const assetClass = document.getElementById('tClass').value;
+      result = doBuy({ symbol, name, assetClass, quantity, price, date });
+    } else {
+      const symbol = document.getElementById('tSymbolSelect').value;
+      if (!symbol) { msgEl.textContent = '保有銘柄がありません'; msgEl.classList.add('error'); return; }
+      result = doSell({ symbol, quantity, price, date });
+    }
+
+    if (!result.ok) {
+      msgEl.textContent = result.msg;
+      msgEl.classList.add('error');
+      return;
+    }
+
+    msgEl.textContent = '記録しました';
+    msgEl.classList.add('success');
+    document.getElementById('tQty').value = '';
+    document.getElementById('tPrice').value = '';
+    document.getElementById('tSymbol').value = '';
+    document.getElementById('tName').value = '';
+    render();
+  });
+}
+
+function setupGoalForm() {
+  document.getElementById('goalForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const target = parseFloat(document.getElementById('gTarget').value);
+    const date = document.getElementById('gDate').value;
+    state.goal.targetAmount = target > 0 ? target : null;
+    state.goal.targetDate = date || null;
+    saveState();
+    render();
+    showToast('目標を保存しました');
+  });
+}
+
+function setupCashForm() {
+  document.getElementById('cashForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const amount = parseFloat(document.getElementById('cashAmount').value);
+    const note = document.getElementById('cashNote').value.trim();
+    if (!amount) return;
+    state.cash += amount;
+    state.cashAdjustments.push({ id: uid(), date: todayStr(), amount, note });
+    saveState();
+    document.getElementById('cashAmount').value = '';
+    document.getElementById('cashNote').value = '';
+    render();
+    showToast('現金残高を更新しました');
+  });
+}
+
+function setupDashboardActions() {
+  document.getElementById('btnRecordSnapshot').addEventListener('click', () => {
+    const today = todayStr();
+    const value = totalAssets();
+    const idx = state.netWorthHistory.findIndex(h => h.date === today);
+    if (idx >= 0) state.netWorthHistory[idx].value = value;
+    else state.netWorthHistory.push({ date: today, value });
+    saveState();
+    render();
+    showToast('本日の資産を記録しました');
+  });
+}
+
+function setupHoldingsActions() {
+  document.getElementById('btnRefreshCrypto').addEventListener('click', fetchCryptoPrices);
+}
+
+function setupHistoryActions() {
+  document.getElementById('historyFilter').addEventListener('change', renderHistory);
+}
+
+let downloadsApi = null;
+if (typeof claude !== 'undefined' && claude && claude.use) {
+  claude.use('downloads').then(api => {
+    downloadsApi = api;
+    if (api) document.getElementById('btnExport').disabled = false;
+  }).catch(() => {});
+}
+
+function setupSettingsActions() {
+  document.getElementById('btnExport').addEventListener('click', async () => {
+    if (!downloadsApi) { showToast('この環境ではダウンロードできません'); return; }
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    try {
+      await downloadsApi.save({ filename: `tousi-sim-backup-${todayStr()}.json`, data: blob });
+      showToast('データを保存しました');
+    } catch (err) {
+      if (err && err.code === 'declined') return;
+      showToast('エクスポートに失敗しました');
+    }
+  });
+
+  document.getElementById('btnImport').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let imported;
+      try {
+        imported = JSON.parse(reader.result);
+        if (!imported || typeof imported !== 'object' || !Array.isArray(imported.holdings)) {
+          throw new Error('invalid format');
+        }
+      } catch (err) {
+        showToast('インポートに失敗しました。ファイル形式を確認してください。');
+        e.target.value = '';
+        return;
+      }
+      showConfirm('現在のデータを上書きしてインポートします。よろしいですか？', () => {
+        state = imported;
+        if (!state.cashAdjustments) state.cashAdjustments = [];
+        if (!state.goal) state.goal = { targetAmount: null, targetDate: null };
+        if (!state.netWorthHistory) state.netWorthHistory = [];
+        if (!state.priceHistory) state.priceHistory = {};
+        if (!state.ai) state.ai = defaultAiState();
+        saveState();
+        render();
+        showToast('データをインポートしました');
+      });
+      e.target.value = '';
+    };
+    reader.readAsText(file);
+  });
+
+  document.getElementById('btnReset').addEventListener('click', () => {
+    showConfirm('すべてのデータを削除します。この操作は取り消せません。よろしいですか？', () => {
+      localStorage.removeItem(STORAGE_KEY);
+      location.reload();
+    });
+  });
+}
+
+function setupModal() {
+  document.getElementById('btnStartSetup').addEventListener('click', () => {
+    const initCash = parseFloat(document.getElementById('initCash').value) || 0;
+    state = defaultState(initCash);
+    saveState();
+    document.getElementById('setupModal').hidden = true;
+    render();
+  });
+}
+
+function init() {
+  const loaded = loadState();
+  setupTabs();
+  setupTradeForm();
+  setupGoalForm();
+  setupCashForm();
+  setupDashboardActions();
+  setupHoldingsActions();
+  setupHistoryActions();
+  setupSettingsActions();
+  setupModal();
+  setupAiActions();
+  setupConfirmModal();
+
+  if (loaded) {
+    state = loaded;
+    if (!state.cashAdjustments) state.cashAdjustments = [];
+    if (!state.goal) state.goal = { targetAmount: null, targetDate: null };
+    if (!state.netWorthHistory) state.netWorthHistory = [];
+    if (!state.priceHistory) state.priceHistory = {};
+    if (!state.ai) state.ai = defaultAiState();
+    render();
+    if (state.ai.running) startAi();
+  } else {
+    document.getElementById('setupModal').hidden = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>

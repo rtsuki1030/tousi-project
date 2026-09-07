@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>投資シミュレーター</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header class="app-header">
+  <h1>投資シミュレーター</h1>
+  <div class="header-total" id="headerTotal">¥0</div>
+</header>
+
+<nav class="tabbar" id="tabbar">
+  <button class="tab-btn active" data-tab="dashboard">📊 ダッシュボード</button>
+  <button class="tab-btn" data-tab="holdings">📁 保有銘柄</button>
+  <button class="tab-btn" data-tab="trade">💱 売買</button>
+  <button class="tab-btn" data-tab="history">🧾 履歴</button>
+  <button class="tab-btn" data-tab="goal">🎯 目標</button>
+  <button class="tab-btn" data-tab="ai">🤖 AI運用</button>
+  <button class="tab-btn" data-tab="settings">⚙️ 設定</button>
+</nav>
+
+<main id="app">
+
+  <!-- ===== DASHBOARD ===== -->
+  <section class="tab-panel active" id="tab-dashboard">
+    <div class="card-grid">
+      <div class="card stat-card">
+        <div class="stat-label">総資産</div>
+        <div class="stat-value" id="statTotalAssets">¥0</div>
+        <div class="stat-sub" id="statTotalPL">±0 (0.0%)</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">現金残高</div>
+        <div class="stat-value" id="statCash">¥0</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">評価損益（含み損益）</div>
+        <div class="stat-value" id="statUnrealized">¥0</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">確定損益（実現損益）</div>
+        <div class="stat-value" id="statRealized">¥0</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title-row">
+        <h2>資産推移</h2>
+        <button class="btn btn-small" id="btnRecordSnapshot">今日の資産を記録</button>
+      </div>
+      <canvas id="netWorthChart" height="180"></canvas>
+      <p class="hint" id="netWorthHint"></p>
+    </div>
+
+    <div class="card-grid two-col">
+      <div class="card">
+        <h2>資産配分（銘柄別）</h2>
+        <canvas id="allocSymbolChart" height="220"></canvas>
+      </div>
+      <div class="card">
+        <h2>資産配分（資産クラス別）</h2>
+        <canvas id="allocClassChart" height="220"></canvas>
+      </div>
+    </div>
+
+    <div class="card" id="goalMiniCard" hidden>
+      <h2>目標達成度</h2>
+      <div class="progress-bar"><div class="progress-fill" id="goalMiniFill"></div></div>
+      <p class="hint" id="goalMiniText"></p>
+    </div>
+  </section>
+
+  <!-- ===== HOLDINGS ===== -->
+  <section class="tab-panel" id="tab-holdings">
+    <div class="card">
+      <div class="card-title-row">
+        <h2>保有銘柄一覧</h2>
+        <div class="btn-row">
+          <button class="btn btn-small" id="btnRefreshCrypto">🔄 暗号資産の価格を自動取得</button>
+          <button class="btn btn-small" id="btnRefreshStocks">🔄 株式・投信の価格を自動取得</button>
+        </div>
+      </div>
+      <p class="hint">暗号資産はCoinGecko、米国株などはTwelve Dataから実際の価格を取得します（設定タブでAPIキー登録が必要）。日本株（4桁コード）は無料APIが存在しないため手動入力してください。</p>
+      <div class="table-wrap">
+        <table id="holdingsTable">
+          <thead>
+            <tr>
+              <th>銘柄</th><th>クラス</th><th>数量</th><th>平均取得単価</th>
+              <th>現在価格</th><th>評価額</th><th>評価損益</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="holdingsBody"></tbody>
+        </table>
+      </div>
+      <p class="empty-hint" id="holdingsEmpty">まだ保有銘柄がありません。「売買」タブから購入を記録してください。</p>
+    </div>
+  </section>
+
+  <!-- ===== TRADE ===== -->
+  <section class="tab-panel" id="tab-trade">
+    <div class="card">
+      <h2>売買を記録</h2>
+      <form id="tradeForm">
+        <div class="form-row">
+          <label>売買種別</label>
+          <div class="segmented">
+            <button type="button" class="seg-btn active" data-type="buy">買い</button>
+            <button type="button" class="seg-btn" data-type="sell">売り</button>
+          </div>
+        </div>
+
+        <div class="form-row" id="rowSymbolBuy">
+          <label for="tSymbol">銘柄コード / ティッカー</label>
+          <input type="text" id="tSymbol" placeholder="例: 7203, AAPL, BTC" autocomplete="off" list="symbolList">
+          <datalist id="symbolList"></datalist>
+        </div>
+        <div class="form-row" id="rowSymbolSell" hidden>
+          <label for="tSymbolSelect">保有銘柄から選択</label>
+          <select id="tSymbolSelect"></select>
+        </div>
+
+        <div class="form-row" id="rowName">
+          <label for="tName">銘柄名（任意）</label>
+          <input type="text" id="tName" placeholder="例: トヨタ自動車">
+        </div>
+
+        <div class="form-row" id="rowClass">
+          <label for="tClass">資産クラス</label>
+          <select id="tClass">
+            <option value="stock">株式</option>
+            <option value="fund">投資信託・ETF</option>
+            <option value="crypto">暗号資産</option>
+            <option value="bond">債券</option>
+            <option value="other">その他</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <label for="tQty">数量</label>
+          <input type="number" id="tQty" min="0" step="any" placeholder="0">
+        </div>
+        <div class="form-row">
+          <label for="tPrice">単価（1単位あたり）</label>
+          <input type="number" id="tPrice" min="0" step="any" placeholder="0">
+        </div>
+        <div class="form-row">
+          <label for="tDate">日付</label>
+          <input type="date" id="tDate">
+        </div>
+
+        <div class="form-row summary-row" id="tradeSummary"></div>
+
+        <button type="submit" class="btn btn-primary" id="tradeSubmitBtn">買いを記録する</button>
+        <p class="form-msg" id="tradeMsg"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- ===== HISTORY ===== -->
+  <section class="tab-panel" id="tab-history">
+    <div class="card">
+      <div class="card-title-row">
+        <h2>取引履歴</h2>
+        <select id="historyFilter">
+          <option value="all">すべて</option>
+          <option value="buy">買いのみ</option>
+          <option value="sell">売りのみ</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table id="historyTable">
+          <thead>
+            <tr><th>日付</th><th>種別</th><th>銘柄</th><th>数量</th><th>単価</th><th>金額</th><th>実現損益</th><th></th></tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+      <p class="empty-hint" id="historyEmpty">まだ取引履歴がありません。</p>
+    </div>
+  </section>
+
+  <!-- ===== GOAL ===== -->
+  <section class="tab-panel" id="tab-goal">
+    <div class="card">
+      <h2>目標金額の設定</h2>
+      <form id="goalForm">
+        <div class="form-row">
+          <label for="gTarget">目標金額（円）</label>
+          <input type="number" id="gTarget" min="0" step="1" placeholder="例: 10000000">
+        </div>
+        <div class="form-row">
+          <label for="gDate">目標達成日（任意）</label>
+          <input type="date" id="gDate">
+        </div>
+        <button type="submit" class="btn btn-primary">目標を保存</button>
+      </form>
+    </div>
+
+    <div class="card" id="goalDetailCard" hidden>
+      <h2>進捗状況</h2>
+      <div class="progress-bar large"><div class="progress-fill" id="goalDetailFill"></div></div>
+      <p class="hint" id="goalDetailText"></p>
+      <div class="card-grid">
+        <div class="stat-card mini">
+          <div class="stat-label">現在の総資産</div>
+          <div class="stat-value" id="goalCurrent">¥0</div>
+        </div>
+        <div class="stat-card mini">
+          <div class="stat-label">目標まで残り</div>
+          <div class="stat-value" id="goalRemaining">¥0</div>
+        </div>
+        <div class="stat-card mini">
+          <div class="stat-label">必要な月間積立目安</div>
+          <div class="stat-value" id="goalMonthly">-</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== AI RUN ===== -->
+  <section class="tab-panel" id="tab-ai">
+    <div class="card">
+      <h2>AIによる自動運用について</h2>
+      <p class="hint">
+        あなたが保有している株式・暗号資産の実際の価格を定期的に取得し、移動平均のモメンタム（勢い）を見て自動で買い増し・売却を判断します。
+        判断が当たったかどうかを報酬として銘柄ごとの「信頼度」を少しずつ調整する単純な適応アルゴリズムで、対話するAI（Claude本体）を都度呼び出しているわけではありません。
+        実行された売買は通常の取引履歴にも記録され、履歴では🤖マークで区別できます。まずは「売買」タブで対象にしたい銘柄を購入してから開始してください。
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="card-title-row">
+        <h2>操作</h2>
+        <span class="hint" id="aiRunLabel">● 停止中</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="btnAiStart">自動運転を開始</button>
+        <button class="btn" id="btnAiStop">停止</button>
+        <button class="btn" id="btnAiStep">1ステップ進める（即時取得）</button>
+      </div>
+      <div class="form-row" style="margin-top:14px;max-width:280px;">
+        <label for="aiInterval">実行間隔</label>
+        <select id="aiInterval">
+          <option value="60">1分ごと</option>
+          <option value="180" selected>3分ごと</option>
+          <option value="600">10分ごと</option>
+          <option value="1800">30分ごと</option>
+        </select>
+      </div>
+      <p class="hint">株式APIの無料枠には利用回数の制限があるため、対象銘柄数が多い場合は長めの間隔をおすすめします。</p>
+      <button class="btn btn-danger" id="btnAiReset" style="margin-top:8px;">学習状態をリセット</button>
+    </div>
+
+    <div class="card-grid">
+      <div class="card stat-card">
+        <div class="stat-label">AI実行回数</div>
+        <div class="stat-value" id="aiSteps">0</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">AI取引回数</div>
+        <div class="stat-value" id="aiTrades">0</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">勝率（決済分）</div>
+        <div class="stat-value" id="aiWinRate">-</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">最終実行</div>
+        <div class="stat-value" id="aiLastRun" style="font-size:14px;">-</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>銘柄別の学習状況</h2>
+      <div class="table-wrap">
+        <table id="aiAssetsTable">
+          <thead><tr><th>銘柄</th><th>現在価格</th><th>保有数量</th><th>学習した信頼度</th><th>直近の判断</th></tr></thead>
+          <tbody id="aiAssetsBody"></tbody>
+        </table>
+      </div>
+      <p class="empty-hint" id="aiAssetsEmpty">対象銘柄がありません。先に「売買」タブで購入してください。</p>
+    </div>
+
+    <div class="card">
+      <h2>判断ログ</h2>
+      <ul class="ai-log" id="aiLog"></ul>
+      <p class="empty-hint" id="aiLogEmpty">まだ判断がありません。</p>
+    </div>
+  </section>
+
+  <!-- ===== SETTINGS ===== -->
+  <section class="tab-panel" id="tab-settings">
+    <div class="card">
+      <h2>APIキー設定</h2>
+      <p class="hint">
+        米国株など（例: AAPL, TSLA）は <a href="https://twelvedata.com/pricing" target="_blank" rel="noopener">Twelve Data</a> の無料APIキーで実価格を自動取得できます（暗号資産はキー不要でそのまま使えます）。<br>
+        日本株（4桁の証券コード、例: 7203）は、Twelve Data・FCS API・JPX公式のいずれも無料プランでは取得できないことを確認済みです。お手数ですが引き続き手動で価格を入力してください。
+      </p>
+      <form id="apiKeyForm">
+        <div class="form-row">
+          <label for="twelveDataKey">Twelve Data APIキー（米国株など）</label>
+          <input type="text" id="twelveDataKey" placeholder="例: 0123456789abcdef...">
+        </div>
+        <button type="submit" class="btn btn-primary">キーを保存</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>現金残高の調整</h2>
+      <p class="hint">入出金があった場合など、現金残高を直接調整できます。</p>
+      <form id="cashForm">
+        <div class="form-row">
+          <label for="cashAmount">増減額（円）※マイナス可</label>
+          <input type="number" id="cashAmount" step="1" placeholder="例: 100000 または -50000">
+        </div>
+        <div class="form-row">
+          <label for="cashNote">メモ（任意）</label>
+          <input type="text" id="cashNote" placeholder="例: 追加入金">
+        </div>
+        <button type="submit" class="btn btn-primary">現金残高を更新</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>データのバックアップ</h2>
+      <p class="hint">このアプリはブラウザ内（localStorage）にのみデータを保存します。端末を変えると引き継がれないため、定期的にエクスポートして保管することをおすすめします。</p>
+      <div class="btn-row">
+        <button class="btn" id="btnExport">📤 データをエクスポート（JSON）</button>
+        <label class="btn btn-file">
+          📥 データをインポート
+          <input type="file" id="btnImport" accept="application/json" hidden>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>危険な操作</h2>
+      <button class="btn btn-danger" id="btnReset">🗑 すべてのデータをリセット</button>
+    </div>
+  </section>
+
+</main>
+
+<div class="modal-overlay" id="setupModal" hidden>
+  <div class="modal">
+    <h2>ようこそ 👋</h2>
+    <p>まずは初期の現金残高（元手資金）を入力してください。</p>
+    <div class="form-row">
+      <label for="initCash">初期資金（円）</label>
+      <input type="number" id="initCash" value="1000000" min="0" step="1">
+    </div>
+    <button class="btn btn-primary" id="btnStartSetup">シミュレーションを始める</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
