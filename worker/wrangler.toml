@@ -7,7 +7,8 @@ compatibility_date = "2025-01-01"
 # the GitHub Actions trigger actually driving ticks. Kept in sync so that if
 # Cloudflare's cron bug is ever fixed, it won't double the API call volume.)
 [triggers]
-crons = ["*/15 * * * *"]
+# "0 12 * * *" (21:00 JST) sends the daily P&L report to Discord instead.
+crons = ["*/15 * * * *", "0 12 * * *"]
 
 # Created with `npx wrangler kv namespace create AI_KV` -- paste the real id
 # it prints into the line below before deploying.

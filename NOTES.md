@@ -16,6 +16,13 @@
 - AIが自分で新しい投資先（暗号資産は時価総額上位、株式は主要企業プール）を発見してウォッチリストに追加
 - サーバー側AIは、ブラウザを閉じてもPCをスリープさせても24時間自動で動き続ける
 
+## 日次収支レポート
+
+- 毎日21:00（日本時間）に、サーバー側AIの収支をDiscordへ送信（GitHub Actions「Daily P&L report」→ Worker の `/api/daily-report`）
+- 「本日の損益」は前回レポート時点の総資産との差。1日1回までしか送らない（再実行しても重複しない）
+- Webhook URLは Worker のシークレット `DISCORD_WEBHOOK_URL`
+- 送らずに中身だけ確認：`https://tousi-ai-worker.rtsuki1030.workers.dev/api/daily-report?dry=1`
+
 ## 既知の制約
 
 - **日本株（4桁コード）は実価格取得に対応していません。** Twelve Data・FCS API・JPX公式のいずれも無料プランでは日本の証券取引所データを提供しておらず、手動入力のみ対応です。

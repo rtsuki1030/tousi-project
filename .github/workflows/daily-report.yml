@@ -1,0 +1,19 @@
+name: Daily P&L report
+
+# Asks the Worker to post the day's P&L summary to Discord at 21:00 JST
+# (12:00 UTC). Same reason as ai-tick.yml: Cloudflare's cron doesn't fire on
+# this account. The Worker sends at most one report per JST day, so a late
+# run or a manual re-run won't post twice.
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send daily report
+        run: |
+          curl -sf -m 60 "https://tousi-ai-worker.rtsuki1030.workers.dev/api/daily-report"

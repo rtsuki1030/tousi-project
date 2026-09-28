@@ -245,7 +245,7 @@ function doBuy(state, { symbol, name, assetClass, quantity, price }) {
   } else {
     state.holdings.push({ symbol, name, assetClass, quantity, avgCost: price, currentPrice: price });
   }
-  state.transactions.push({ date: todayStr(), type: 'buy', symbol, quantity, price, amount, realizedPL: null });
+  state.transactions.push({ date: todayStr(), t: Date.now(), type: 'buy', symbol, quantity, price, amount, realizedPL: null });
   if (state.transactions.length > 200) state.transactions.shift();
   return true;
 }
@@ -259,7 +259,7 @@ function doSell(state, { symbol, quantity, price }) {
   h.quantity -= quantity;
   h.currentPrice = price;
   if (h.quantity <= 1e-9) state.holdings = state.holdings.filter(x => x.symbol !== symbol);
-  state.transactions.push({ date: todayStr(), type: 'sell', symbol, quantity, price, amount, realizedPL: realized });
+  state.transactions.push({ date: todayStr(), t: Date.now(), type: 'sell', symbol, quantity, price, amount, realizedPL: realized });
   if (state.transactions.length > 200) state.transactions.shift();
   return { ok: true, realized };
 }
@@ -402,6 +402,106 @@ async function runAiTick(env) {
   return state;
 }
 
+// ---------- daily P&L report (Discord) ----------
+
+// Stores the total-assets snapshot taken at the last report, so each report's
+// "today" figure is the change since the previous one rather than since start.
+const DAILY_REPORT_KEY = 'daily_report_v1';
+const DAILY_REPORT_CRON = '0 12 * * *'; // 21:00 JST
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function jstDateStr(ms = Date.now()) {
+  return new Date(ms + JST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function yen(n) {
+  return `¥${Math.round(n).toLocaleString('ja-JP')}`;
+}
+
+function signedYen(n) {
+  const r = Math.round(n);
+  return `${r > 0 ? '+' : r < 0 ? '-' : '±'}${yen(Math.abs(r))}`;
+}
+
+function pct(n) {
+  return `${n > 0 ? '+' : ''}${(n * 100).toFixed(2)}%`;
+}
+
+function buildDailyReport(state, prev) {
+  const now = Date.now();
+  const total = totalAssets(state);
+  const baseValue = prev ? prev.value : state.initialCash;
+  const sinceAt = prev ? prev.at : 0;
+  const dayChange = total - baseValue;
+  const cumChange = total - state.initialCash;
+
+  const periodTx = state.transactions.filter(tx => tx.t && tx.t > sinceAt);
+  const buys = periodTx.filter(tx => tx.type === 'buy').length;
+  const sells = periodTx.filter(tx => tx.type === 'sell');
+  const realized = sells.reduce((s, tx) => s + (tx.realizedPL || 0), 0);
+
+  const holdingLines = state.holdings
+    .map(h => {
+      const value = h.quantity * h.currentPrice;
+      const unrealized = (h.currentPrice - h.avgCost) * h.quantity;
+      return { line: `${h.symbol}  ${yen(value)}（含み ${signedYen(unrealized)}）`, value };
+    })
+    .sort((a, b) => b.value - a.value)
+    .map(x => x.line);
+  let holdingsText = holdingLines.length ? holdingLines.join('\n') : '（保有なし）';
+  if (holdingsText.length > 1000) holdingsText = holdingsText.slice(0, 990) + '\n…';
+
+  const winRate = state.closedTrades > 0 ? `${Math.round((state.wins / state.closedTrades) * 100)}%` : '—';
+  const color = dayChange > 0 ? 0x2e9e5b : dayChange < 0 ? 0xd64545 : 0x888888;
+
+  return {
+    total,
+    embed: {
+      title: `📊 AI運用 日次収支レポート（${jstDateStr(now)}）`,
+      color,
+      fields: [
+        { name: '総資産', value: yen(total), inline: true },
+        { name: '本日の損益', value: `${signedYen(dayChange)}（${pct(baseValue > 0 ? dayChange / baseValue : 0)}）`, inline: true },
+        { name: '累計損益', value: `${signedYen(cumChange)}（${pct(cumChange / state.initialCash)}）`, inline: true },
+        { name: '本日の取引', value: `買い ${buys}件 / 売り ${sells.length}件\n確定損益 ${signedYen(realized)}`, inline: true },
+        { name: '現金', value: yen(state.cash), inline: true },
+        { name: '通算勝率', value: `${winRate}（決済${state.closedTrades}件）`, inline: true },
+        { name: '保有銘柄', value: holdingsText },
+      ],
+      footer: { text: prev ? `前回レポート（${jstDateStr(prev.at)}）からの変化` : '初回レポート：運用開始からの変化' },
+      timestamp: new Date(now).toISOString(),
+    },
+  };
+}
+
+// Sends at most one report per JST day, so a late or duplicated trigger
+// (GitHub Actions + a revived Cloudflare cron) can't spam the channel.
+// `dryRun` returns the payload without sending or recording anything.
+async function sendDailyReport(env, { dryRun = false } = {}) {
+  const today = jstDateStr();
+  let prev = null;
+  try { prev = JSON.parse(await env.AI_KV.get(DAILY_REPORT_KEY) || 'null'); } catch (e) { prev = null; }
+  if (!dryRun && prev && prev.date === today) return { ok: true, skipped: 'already sent today' };
+
+  const state = await loadState(env);
+  const { total, embed } = buildDailyReport(state, prev);
+  if (dryRun) return { ok: true, dryRun: true, embed };
+
+  if (!env.DISCORD_WEBHOOK_URL) return { ok: false, error: 'DISCORD_WEBHOOK_URL is not set' };
+  const res = await fetch(env.DISCORD_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: '投資AIレポート', embeds: [embed] }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    console.log('discord webhook failed', res.status, body);
+    return { ok: false, error: `discord ${res.status}` };
+  }
+  await env.AI_KV.put(DAILY_REPORT_KEY, JSON.stringify({ date: today, value: total, at: Date.now() }));
+  return { ok: true, sent: today };
+}
+
 // ---------- HTTP status endpoint ----------
 
 const CORS_HEADERS = {
@@ -448,10 +548,17 @@ export default {
       return jsonResponse({ ok: true, steps: state.steps });
     }
 
+    if (url.pathname === '/api/daily-report') {
+      // ?dry=1 previews the report without posting to Discord
+      const result = await sendDailyReport(env, { dryRun: url.searchParams.get('dry') === '1' });
+      return jsonResponse(result, result.ok ? 200 : 500);
+    }
+
     return new Response('tousi-ai-worker: see /api/state', { headers: CORS_HEADERS });
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runAiTick(env));
+    if (event.cron === DAILY_REPORT_CRON) ctx.waitUntil(sendDailyReport(env));
+    else ctx.waitUntil(runAiTick(env));
   },
 };
