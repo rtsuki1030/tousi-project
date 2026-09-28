@@ -523,7 +523,15 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/api/state') {
       const state = await loadState(env);
+      // Lets the status page pull price charts straight from CoinGecko.
+      const catalog = (await loadCryptoCatalog(env))?.map || null;
+      const cryptoIds = {};
+      state.holdings.filter(h => h.assetClass === 'crypto').forEach(h => {
+        const id = resolveCryptoId(h.symbol, catalog);
+        if (id) cryptoIds[h.symbol] = id;
+      });
       return jsonResponse({
+        cryptoIds,
         cash: state.cash,
         initialCash: state.initialCash,
         totalAssets: totalAssets(state),

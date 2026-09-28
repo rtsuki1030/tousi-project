@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>サーバー側AI運用状況</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip-row .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .range-picker { max-width: 320px; margin-bottom: 10px; }
+  .range-picker .seg-btn { padding: 6px; font-size: 13px; }
+  .crypto-chart-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--text-sub); margin-bottom: 8px; }
+  .crypto-chart-meta strong { color: var(--text); font-size: 16px; }
+  .crypto-chart-meta .positive { color: var(--green); }
+  .crypto-chart-meta .negative { color: var(--red); }
+  .crypto-chart-box { position: relative; height: 260px; }
+</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
 </head>
 <body>
@@ -17,7 +28,7 @@
 <main id="app" style="padding-top:16px;">
   <div class="card">
     <p class="hint">
-      これはブラウザのタブを閉じても、PCがスリープしても<strong>24時間365日、5分ごとに自動売買を続けるAI</strong>専用のポートフォリオです（Cloudflare Workers上で実行）。
+      これはブラウザのタブを閉じても、PCがスリープしても<strong>24時間365日、15分ごとに自動売買を続けるAI</strong>専用のポートフォリオです（Cloudflare Workers上で実行）。
       あなたが手動で操作しているアプリ本体の資産・履歴とは完全に別会計です。読み取り専用のページなので、ここから操作することはできません。
     </p>
     <p class="hint" id="lastRun">最終実行: -</p>
@@ -46,6 +57,20 @@
   <div class="card">
     <h2>資産推移</h2>
     <canvas id="equityChart" height="180"></canvas>
+  </div>
+
+  <div class="card" id="cryptoChartCard" hidden>
+    <h2>保有暗号資産のチャート</h2>
+    <div class="chip-row" id="cryptoPicker"></div>
+    <div class="segmented range-picker" id="rangePicker">
+      <button class="seg-btn" data-days="1">1日</button>
+      <button class="seg-btn active" data-days="7">7日</button>
+      <button class="seg-btn" data-days="30">30日</button>
+      <button class="seg-btn" data-days="90">90日</button>
+    </div>
+    <div class="crypto-chart-meta" id="cryptoChartMeta"></div>
+    <div class="crypto-chart-box"><canvas id="cryptoChart"></canvas></div>
+    <p class="hint" id="cryptoChartNote">価格データ: CoinGecko（円建て）。破線は平均取得単価、▲は買い・▼は売り（直近の取引のみ）。</p>
   </div>
 
   <div class="card">
@@ -93,6 +118,182 @@ function escapeHtml(s) {
 
 let equityChart = null;
 
+// ---------- held-crypto price chart ----------
+
+let cryptoChart = null;
+let selectedCrypto = null;
+let selectedDays = 7;
+let latestData = null;
+let lastCryptoRenderKey = '';
+let cryptoRenderSeq = 0;
+const priceCache = {}; // `${id}|${days}` -> {at, prices}
+// CoinGecko's public API allows only a handful of calls per minute, so the
+// 30s page refresh reuses fetched history instead of re-requesting it.
+const PRICE_CACHE_MS = 5 * 60 * 1000;
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// Small-cap coins trade well under ¥1, where whole-yen rounding hides everything.
+function formatPrice(n) {
+  if (!isFinite(n)) return '-';
+  const abs = Math.abs(n);
+  const digits = abs >= 1000 ? 0 : abs >= 10 ? 2 : abs >= 0.1 ? 4 : 6;
+  return '¥' + n.toLocaleString('ja-JP', { minimumFractionDigits: digits > 0 ? Math.min(digits, 2) : 0, maximumFractionDigits: digits });
+}
+
+function formatPct(n) {
+  return `${n > 0 ? '+' : ''}${(n * 100).toFixed(2)}%`;
+}
+
+async function fetchPriceHistory(id, days) {
+  const key = `${id}|${days}`;
+  const cached = priceCache[key];
+  if (cached && Date.now() - cached.at < PRICE_CACHE_MS) return cached;
+  const res = await fetch(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(id)}/market_chart?vs_currency=jpy&days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  const entry = { at: Date.now(), prices: (json.prices || []).map(([t, p]) => ({ x: t, y: p })) };
+  priceCache[key] = entry;
+  return entry;
+}
+
+function heldCrypto(data) {
+  return (data.holdings || [])
+    .filter(h => h.assetClass === 'crypto')
+    .sort((a, b) => b.quantity * b.currentPrice - a.quantity * a.currentPrice);
+}
+
+function renderCryptoPicker(data) {
+  const holdings = heldCrypto(data);
+  document.getElementById('cryptoChartCard').hidden = holdings.length === 0;
+  if (holdings.length === 0) { selectedCrypto = null; return; }
+  if (!holdings.some(h => h.symbol === selectedCrypto)) selectedCrypto = holdings[0].symbol;
+  document.getElementById('cryptoPicker').innerHTML = holdings.map(h =>
+    `<button class="btn btn-small${h.symbol === selectedCrypto ? ' active' : ''}" data-symbol="${escapeHtml(h.symbol)}">${escapeHtml(h.symbol)}</button>`
+  ).join('');
+}
+
+async function renderCryptoChart(force = false) {
+  const data = latestData;
+  if (!data || !selectedCrypto) return;
+  const h = heldCrypto(data).find(x => x.symbol === selectedCrypto);
+  if (!h) return;
+  const meta = document.getElementById('cryptoChartMeta');
+  const id = data.cryptoIds && data.cryptoIds[h.symbol];
+  if (!id) {
+    meta.textContent = `${h.symbol} の価格履歴はCoinGeckoで見つかりませんでした。`;
+    if (cryptoChart) { cryptoChart.destroy(); cryptoChart = null; }
+    lastCryptoRenderKey = '';
+    return;
+  }
+
+  const seq = ++cryptoRenderSeq;
+  let history;
+  try {
+    history = await fetchPriceHistory(id, selectedDays);
+  } catch (e) {
+    if (seq !== cryptoRenderSeq) return;
+    meta.textContent = '価格履歴を取得できませんでした（CoinGeckoの利用制限の可能性があります。少し待つと再表示されます）。';
+    return;
+  }
+  if (seq !== cryptoRenderSeq) return; // a newer selection superseded this one
+
+  const prices = history.prices;
+  if (prices.length < 2) { meta.textContent = '表示できる価格データがありません。'; return; }
+  const from = prices[0].x;
+  const to = prices[prices.length - 1].x;
+  const trades = (data.transactions || []).filter(t => t.symbol === h.symbol && t.t && t.t >= from);
+
+  const renderKey = [h.symbol, selectedDays, history.at, h.avgCost, h.quantity, trades.length].join('|');
+  if (!force && renderKey === lastCryptoRenderKey && cryptoChart) return;
+  lastCryptoRenderKey = renderKey;
+
+  const last = prices[prices.length - 1].y;
+  const periodChange = (last - prices[0].y) / prices[0].y;
+  const unrealized = (h.currentPrice - h.avgCost) * h.quantity;
+  const unrealizedPct = h.avgCost > 0 ? (h.currentPrice - h.avgCost) / h.avgCost : 0;
+  meta.innerHTML = `
+    <span><strong>${formatPrice(last)}</strong></span>
+    <span>期間 <span class="${signClass(periodChange)}">${formatPct(periodChange)}</span></span>
+    <span>平均取得単価 ${formatPrice(h.avgCost)}</span>
+    <span>含み損益 <span class="${signClass(unrealized)}">${unrealized >= 0 ? '+' : '-'}${formatYen(Math.abs(unrealized))}（${formatPct(unrealizedPct)}）</span></span>
+  `;
+
+  const accent = cssVar('--accent') || '#2f6fed';
+  const muted = cssVar('--text-sub') || '#667085';
+  const grid = cssVar('--border') || '#e3e7ee';
+  const surface = cssVar('--surface') || '#ffffff';
+  const markerStyle = color => ({
+    type: 'scatter', clip: false, pointStyle: 'triangle', pointRadius: 7, pointHoverRadius: 9,
+    backgroundColor: color, borderColor: surface, borderWidth: 2,
+  });
+  const buys = trades.filter(t => t.type === 'buy').map(t => ({ x: t.t, y: t.price }));
+  const sells = trades.filter(t => t.type === 'sell').map(t => ({ x: t.t, y: t.price }));
+
+  const datasets = [
+    { label: '価格', data: prices, pointStyle: 'line', borderColor: accent, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0, fill: false },
+    { label: '平均取得単価', pointStyle: 'line', data: [{ x: from, y: h.avgCost }, { x: to, y: h.avgCost }], borderColor: muted, borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 0, fill: false },
+  ];
+  if (buys.length) datasets.push({ label: '買い', data: buys, ...markerStyle(cssVar('--green') || '#17825a') });
+  if (sells.length) datasets.push({ label: '売り', data: sells, rotation: 180, ...markerStyle(cssVar('--red') || '#d1373f') });
+
+  const dateFmt = selectedDays <= 1
+    ? { hour: '2-digit', minute: '2-digit' }
+    : { month: 'numeric', day: 'numeric' };
+
+  if (cryptoChart) cryptoChart.destroy();
+  cryptoChart = new Chart(document.getElementById('cryptoChart').getContext('2d'), {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      layout: { padding: { top: 8, right: 10 } },
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      plugins: {
+        legend: { labels: { usePointStyle: true, color: muted, boxHeight: 8 } },
+        tooltip: {
+          filter: item => item.dataset.label !== '平均取得単価',
+          callbacks: {
+            title: items => new Date(items[0].parsed.x).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            label: item => `${item.dataset.label}: ${formatPrice(item.parsed.y)}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear', min: from, max: to,
+          grid: { display: false },
+          ticks: { color: muted, maxTicksLimit: 6, callback: v => new Date(v).toLocaleString('ja-JP', dateFmt) },
+        },
+        y: {
+          grid: { color: grid },
+          ticks: { color: muted, callback: v => formatPrice(v) },
+        },
+      },
+    },
+  });
+}
+
+document.getElementById('cryptoPicker').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-symbol]');
+  if (!btn || btn.dataset.symbol === selectedCrypto) return;
+  selectedCrypto = btn.dataset.symbol;
+  renderCryptoPicker(latestData);
+  renderCryptoChart(true);
+});
+
+document.getElementById('rangePicker').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-days]');
+  if (!btn) return;
+  selectedDays = Number(btn.dataset.days);
+  document.querySelectorAll('#rangePicker .seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+  renderCryptoChart(true);
+});
+
 async function refresh() {
   let data;
   try {
@@ -102,6 +303,10 @@ async function refresh() {
     document.getElementById('lastRun').textContent = 'サーバーに接続できませんでした。デプロイ直後は数分かかることがあります。';
     return;
   }
+
+  latestData = data;
+  renderCryptoPicker(data);
+  renderCryptoChart();
 
   document.getElementById('statTotalAssets').textContent = formatYen(data.totalAssets);
   const pl = data.totalAssets - data.initialCash;
@@ -113,7 +318,7 @@ async function refresh() {
   document.getElementById('statSteps').textContent = data.steps.toLocaleString('ja-JP');
   document.getElementById('statWinRate').textContent = data.closedTrades > 0 ? ((data.wins / data.closedTrades) * 100).toFixed(1) + '%' : '-';
   document.getElementById('lastRun').textContent = data.lastRunAt
-    ? `最終実行: ${new Date(data.lastRunAt).toLocaleString('ja-JP')}（5分ごとに自動実行）`
+    ? `最終実行: ${new Date(data.lastRunAt).toLocaleString('ja-JP')}（15分ごとに自動実行）`
     : 'まだ実行されていません';
 
   const hBody = document.getElementById('holdingsBody');
