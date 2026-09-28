@@ -665,7 +665,7 @@ async function sendDailyReport(env, { dryRun = false } = {}) {
   const { total, embed } = buildDailyReport(state, prev);
   if (dryRun) return { ok: true, dryRun: true, embed };
 
-  const sent = await postToDiscord(env, embed);
+  const sent = await postToDiscord(env.DISCORD_WEBHOOK_URL, embed);
   if (!sent.ok) return sent;
   await env.AI_KV.put(DAILY_REPORT_KEY, JSON.stringify({ date: today, value: total, at: Date.now() }));
   return { ok: true, sent: today };
@@ -783,9 +783,12 @@ function buildWeeklyReport(state, prev) {
   };
 }
 
-async function postToDiscord(env, embed) {
-  if (!env.DISCORD_WEBHOOK_URL) return { ok: false, error: 'DISCORD_WEBHOOK_URL is not set' };
-  const res = await fetch(env.DISCORD_WEBHOOK_URL, {
+// Each webhook posts into the one channel it was created in: the daily P&L
+// goes to #shuusi (DISCORD_WEBHOOK_URL), the weekly learning report to #learn
+// (DISCORD_WEBHOOK_URL_LEARN, falling back to the daily channel if unset).
+async function postToDiscord(webhookUrl, embed) {
+  if (!webhookUrl) return { ok: false, error: 'Discord webhook URL is not set' };
+  const res = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: '投資AIレポート', embeds: [embed] }),
@@ -805,7 +808,7 @@ async function sendWeeklyReport(env, { dryRun = false } = {}) {
   const { total, weights, embed } = buildWeeklyReport(state, prev);
   if (dryRun) return { ok: true, dryRun: true, embed };
 
-  const sent = await postToDiscord(env, embed);
+  const sent = await postToDiscord(env.DISCORD_WEBHOOK_URL_LEARN || env.DISCORD_WEBHOOK_URL, embed);
   if (!sent.ok) return sent;
   await env.AI_KV.put(WEEKLY_REPORT_KEY, JSON.stringify({ value: total, weights, at: Date.now() }));
   return { ok: true, sent: jstDateStr() };
