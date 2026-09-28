@@ -39,6 +39,10 @@ const CRYPTO_CATALOG_KEY = 'crypto_catalog_v1';
 const CRYPTO_CATALOG_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const INITIAL_CASH = 1000000;
 const AI_DISCOVERY_EVERY_N_TICKS = 3;
+// Twelve Data's free plan caps out at 800 requests/day. At a 15-minute tick
+// (96 ticks/day) fetching every stock symbol every tick would burn through
+// that budget by mid-morning, so stocks are only refreshed on every 3rd tick.
+const STOCK_FETCH_EVERY_N_TICKS = 3;
 const AI_DISCOVERY_TOP_CRYPTO = 150;
 
 function todayStr() {
@@ -96,17 +100,25 @@ async function loadCryptoCatalog(env) {
 
 // CoinGecko returns 403 for requests without a descriptive User-Agent --
 // Workers' fetch() doesn't set one by default the way a browser does.
-const COINGECKO_HEADERS = { 'User-Agent': 'tousi-ai-worker/1.0 (personal investment simulator)' };
+// A free Demo API key (x-cg-demo-api-key) gets its own rate-limit bucket
+// instead of sharing Cloudflare's heavily-throttled anonymous IP pool --
+// set COINGECKO_API_KEY via `wrangler secret put` to enable it.
+function coingeckoHeaders(apiKey) {
+  const headers = { 'User-Agent': 'tousi-ai-worker/1.0 (personal investment simulator)' };
+  if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
+  return headers;
+}
 
 async function refreshCryptoCatalogIfStale(env) {
   const cached = await loadCryptoCatalog(env);
   if (cached && Date.now() - cached.at < CRYPTO_CATALOG_MAX_AGE_MS) return cached.map;
 
+  const headers = coingeckoHeaders(env.COINGECKO_API_KEY);
   const map = {};
   for (let page = 1; page <= 8; page++) {
     const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=jpy&order=market_cap_desc&per_page=250&page=${page}&sparkline=false`;
     try {
-      const res = await fetch(url, { headers: COINGECKO_HEADERS });
+      const res = await fetch(url, { headers });
       if (!res.ok) break;
       const rows = await res.json();
       if (!Array.isArray(rows) || rows.length === 0) break;
@@ -130,7 +142,7 @@ function resolveCryptoId(symbol, catalog) {
   return CRYPTO_ID_MAP[upper] || null;
 }
 
-async function fetchCryptoPrices(symbols, catalog) {
+async function fetchCryptoPrices(symbols, catalog, apiKey) {
   const idPairs = [...new Set(symbols)]
     .map(symbol => ({ symbol, id: resolveCryptoId(symbol, catalog) }))
     .filter(x => x.id);
@@ -138,8 +150,8 @@ async function fetchCryptoPrices(symbols, catalog) {
   const ids = [...new Set(idPairs.map(x => x.id))].join(',');
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=jpy`;
   try {
-    const res = await fetch(url, { headers: COINGECKO_HEADERS });
-    if (!res.ok) return {};
+    const res = await fetch(url, { headers: coingeckoHeaders(apiKey) });
+    if (!res.ok) { console.log('crypto price fetch failed', res.status, await res.text()); return {}; }
     const data = await res.json();
     const out = {};
     idPairs.forEach(({ symbol, id }) => {
@@ -148,6 +160,7 @@ async function fetchCryptoPrices(symbols, catalog) {
     });
     return out;
   } catch (e) {
+    console.log('crypto price fetch threw', String(e));
     return {};
   }
 }
@@ -189,8 +202,11 @@ async function fetchStockPrices(symbols, key, fxCache) {
         const currency = data.currency || 'USD';
         const fxRate = await getFxRateToJpy(currency, key, fxCache);
         if (fxRate != null) out[symbol] = rawPrice * fxRate;
+        else console.log('fx rate fetch failed for', currency);
+      } else {
+        console.log('stock price fetch failed', symbol, JSON.stringify(data));
       }
-    } catch (e) { /* skip this symbol */ }
+    } catch (e) { console.log('stock price fetch threw', symbol, String(e)); }
     if (i < uniqueSymbols.length - 1) await sleep(8000);
   }
   return out;
@@ -309,9 +325,10 @@ async function runAiTick(env) {
   const cryptoSymbols = universe.filter(x => x.assetClass === 'crypto').map(x => x.symbol);
   const stockSymbols = universe.filter(x => x.assetClass === 'stock').map(x => x.symbol);
 
-  const cryptoPrices = cryptoSymbols.length ? await fetchCryptoPrices(cryptoSymbols, catalog) : {};
+  const cryptoPrices = cryptoSymbols.length ? await fetchCryptoPrices(cryptoSymbols, catalog, env.COINGECKO_API_KEY) : {};
   const fxCache = {};
-  const stockPrices = stockSymbols.length ? await fetchStockPrices(stockSymbols, twelveDataKey, fxCache) : {};
+  const shouldFetchStocks = state.steps % STOCK_FETCH_EVERY_N_TICKS === 0;
+  const stockPrices = (stockSymbols.length && shouldFetchStocks) ? await fetchStockPrices(stockSymbols, twelveDataKey, fxCache) : {};
   const allPrices = { ...cryptoPrices, ...stockPrices };
 
   Object.entries(allPrices).forEach(([symbol, price]) => {

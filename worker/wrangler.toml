@@ -2,9 +2,12 @@ name = "tousi-ai-worker"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
-# Runs the AI trading tick every 5 minutes, independent of any browser tab.
+# Runs the AI trading tick every 15 minutes, independent of any browser tab.
+# (Currently dormant on this account -- see .github/workflows/ai-tick.yml for
+# the GitHub Actions trigger actually driving ticks. Kept in sync so that if
+# Cloudflare's cron bug is ever fixed, it won't double the API call volume.)
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/15 * * * *"]
 
 # Created with `npx wrangler kv namespace create AI_KV` -- paste the real id
 # it prints into the line below before deploying.
