@@ -1,0 +1,40 @@
+name: Weekly strategy backtest
+
+# Every Monday 03:00 JST: replay the last 90 days of hourly crypto prices
+# through the AI's strategies, pick the best settings, and commit them to
+# backtest/results/config.json -- the Worker pulls that file from GitHub.
+# The weekly commit also keeps this repo "active", so GitHub doesn't pause
+# the scheduled workflows after 60 days without commits.
+
+on:
+  schedule:
+    - cron: '0 18 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run backtest
+        env:
+          # Optional: add a CoinGecko demo key as a repository secret to make
+          # the download faster; without it the script just paces itself slower.
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+        run: node backtest/run.mjs
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backtest/results
+          git diff --cached --quiet && exit 0
+          git commit -m "Update strategy settings from weekly backtest"
+          git pull --rebase
+          git push

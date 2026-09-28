@@ -1,0 +1,153 @@
+{
+  "source": "backtest",
+  "generatedAt": "2026-09-28T13:14:40.330Z",
+  "adoptedAt": "2026-09-28T13:14:40.330Z",
+  "params": {
+    "momentum": {
+      "n": 48
+    },
+    "maCross": {
+      "fast": 24,
+      "slow": 120
+    },
+    "rsi": {
+      "period": 24,
+      "low": 30,
+      "high": 70
+    },
+    "bollinger": {
+      "period": 48,
+      "k": 1.5
+    },
+    "breakout": {
+      "n": 72
+    }
+  },
+  "ensemble": {
+    "entry": 0.35,
+    "exit": -0.15,
+    "stopLoss": 0.08,
+    "takeProfit": 0.1,
+    "positionFraction": 0.1
+  },
+  "learning": {
+    "decay": 0.9995,
+    "eta": 4
+  },
+  "priorScores": {
+    "momentum": -0.238767,
+    "maCross": 0.0640994,
+    "rsi": -0.0565339,
+    "bollinger": 0.0428002,
+    "breakout": 0.0105463
+  },
+  "report": {
+    "generatedAt": "2026-09-28T13:14:40.330Z",
+    "adopted": true,
+    "dataFrom": "2026-07-05T15:00:00.000Z",
+    "trainEnd": "2026-08-29T13:00:00.000Z",
+    "dataTo": "2026-09-28T13:00:00.000Z",
+    "coins": [
+      "CRO",
+      "JST",
+      "CC",
+      "JUP",
+      "KITE",
+      "BTC",
+      "ETH",
+      "BNB",
+      "XRP",
+      "SOL",
+      "TRX",
+      "ZEC",
+      "FIGR_HELOC",
+      "HYPE",
+      "DOGE",
+      "LINK",
+      "XMR",
+      "WBT",
+      "ADA",
+      "RAIN",
+      "LEO",
+      "XLM",
+      "NEAR",
+      "BCH",
+      "UNI"
+    ],
+    "train": {
+      "chosen": {
+        "ret": 0.239596,
+        "maxDD": 0.0797854,
+        "trades": 427,
+        "winRate": 0.461538,
+        "objective": 0.199704
+      }
+    },
+    "test": {
+      "chosen": {
+        "ret": 0.0969864,
+        "maxDD": 0.0832861,
+        "trades": 285,
+        "winRate": 0.467626,
+        "objective": 0.0553434
+      },
+      "previous": {
+        "ret": -0.0970983,
+        "maxDD": 0.164806,
+        "trades": 648,
+        "winRate": 0.287926,
+        "objective": -0.179501
+      },
+      "buyHold": {
+        "ret": 0.251643,
+        "maxDD": 0.101377
+      }
+    },
+    "strategies": [
+      {
+        "key": "momentum",
+        "params": {
+          "n": 48
+        },
+        "trainRet": -0.046782,
+        "testRet": 0.00283618
+      },
+      {
+        "key": "maCross",
+        "params": {
+          "fast": 24,
+          "slow": 120
+        },
+        "trainRet": 0.0823495,
+        "testRet": 0.0946365
+      },
+      {
+        "key": "rsi",
+        "params": {
+          "period": 24,
+          "low": 30,
+          "high": 70
+        },
+        "trainRet": 0.0489647,
+        "testRet": 0.0910867
+      },
+      {
+        "key": "bollinger",
+        "params": {
+          "period": 48,
+          "k": 1.5
+        },
+        "trainRet": 0.012706,
+        "testRet": 0.09864
+      },
+      {
+        "key": "breakout",
+        "params": {
+          "n": 72
+        },
+        "trainRet": 0.0847436,
+        "testRet": 0.0889633
+      }
+    ]
+  }
+}

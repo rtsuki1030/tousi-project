@@ -14,6 +14,22 @@
   .crypto-chart-meta strong { color: var(--text); font-size: 16px; }
   .crypto-chart-meta .positive { color: var(--green); }
   .crypto-chart-meta .negative { color: var(--red); }
+  .sub-heading { font-size: 14px; margin: 20px 0 8px; }
+  .weight-cell { display: flex; align-items: center; gap: 8px; min-width: 140px; }
+  .weight-track { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .weight-fill { height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
+  .weight-fill.cash { background: var(--text-sub); }
+  .weight-value { font-variant-numeric: tabular-nums; min-width: 3.5em; text-align: right; }
+  .vote { display: inline-block; width: 1.3em; text-align: center; font-size: 12px; }
+  .vote.up { color: var(--green); }
+  .vote.down { color: var(--red); }
+  .vote.flat { color: var(--text-sub); }
+  .num { font-variant-numeric: tabular-nums; }
+  .num.positive { color: var(--green); }
+  .num.negative { color: var(--red); }
+  .bt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  .bt-tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .bt-tile .stat-value { font-size: 18px; }
   .crypto-chart-box { position: relative; height: 260px; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
@@ -57,6 +73,30 @@
   <div class="card">
     <h2>資産推移</h2>
     <canvas id="equityChart" height="180"></canvas>
+  </div>
+
+  <div class="card" id="strategyCard" hidden>
+    <h2>AIの戦略と学習</h2>
+    <p class="hint" id="strategySource"></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>戦略</th><th>タイプ</th><th>設定</th><th>現在の重み</th><th>検証期間の成績（単独）</th></tr></thead>
+        <tbody id="strategyBody"></tbody>
+      </table>
+    </div>
+    <p class="hint">重みは、各戦略の「次の1時間の値動き」の読みがどれだけ当たってきたかで自動的に変わります。「見送り（現金）」の重みが大きいほど、どの戦略も当たっておらず、AIは新規購入に慎重になります。</p>
+
+    <h3 class="sub-heading">週1回のバックテスト結果</h3>
+    <div id="backtestSummary"></div>
+
+    <h3 class="sub-heading">銘柄ごとの判断（直近1時間足）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>銘柄</th><th>合議スコア</th><th>各戦略の票</th><th>判断</th></tr></thead>
+        <tbody id="signalBody"></tbody>
+      </table>
+    </div>
+    <p class="hint">票: <span class="vote up">▲</span>買い <span class="vote down">▼</span>売り <span class="vote flat">・</span>中立（左から <span id="voteOrder"></span>）</p>
   </div>
 
   <div class="card" id="cryptoChartCard" hidden>
@@ -117,6 +157,104 @@ function escapeHtml(s) {
 }
 
 let equityChart = null;
+
+// ---------- strategies & learning ----------
+
+const STRATEGY_ORDER = ['momentum', 'maCross', 'rsi', 'bollinger', 'breakout'];
+
+function describeParams(key, p) {
+  if (!p) return '-';
+  switch (key) {
+    case 'momentum': return `${p.n}時間前と比較`;
+    case 'maCross': return `${p.fast}時間 / ${p.slow}時間平均`;
+    case 'rsi': return `${p.period}本・${p.low}以下で買い / ${p.high}以上で売り`;
+    case 'bollinger': return `${p.period}本・±${p.k}σ`;
+    case 'breakout': return `${p.n}時間の高値・安値`;
+    default: return JSON.stringify(p);
+  }
+}
+
+function pctCell(x, digits = 1) {
+  if (x == null || !isFinite(x)) return '<span class="num">-</span>';
+  return `<span class="num ${signClass(x)}">${x > 0 ? '+' : ''}${(x * 100).toFixed(digits)}%</span>`;
+}
+
+function formatDate(iso) {
+  return iso ? new Date(iso).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) : '-';
+}
+
+function renderStrategy(data) {
+  const s = data.strategy;
+  const card = document.getElementById('strategyCard');
+  card.hidden = !s;
+  if (!s) return;
+  const cfg = s.config || {};
+  const ens = cfg.ensemble || {};
+  const report = s.report;
+
+  const source = cfg.source === 'backtest'
+    ? `設定: バックテストで選択（${formatDate(cfg.adoptedAt)}採用）`
+    : '設定: 初期設定（まだバックテスト結果が反映されていません）';
+  document.getElementById('strategySource').textContent =
+    `${source} ／ 買い基準 ${ens.entry} 以上・売り基準 ${ens.exit} 以下・損切り -${Math.round(ens.stopLoss * 100)}%・利確 +${Math.round(ens.takeProfit * 100)}%${ens.takeProfit >= 10 ? '（実質なし）' : ''}・1銘柄あたり総資産の${Math.round(ens.positionFraction * 100)}%`;
+
+  const testByKey = {};
+  (report?.strategies || []).forEach(r => { testByKey[r.key] = r.testRet; });
+  const weightRow = (label, kind, params, w, test, isCash) => `
+    <tr>
+      <td><strong>${escapeHtml(label)}</strong></td>
+      <td>${escapeHtml(kind)}</td>
+      <td>${escapeHtml(params)}</td>
+      <td><div class="weight-cell">
+        <div class="weight-track"><div class="weight-fill${isCash ? ' cash' : ''}" style="width:${(w * 100).toFixed(1)}%"></div></div>
+        <span class="weight-value">${(w * 100).toFixed(0)}%</span>
+      </div></td>
+      <td>${test}</td>
+    </tr>`;
+  document.getElementById('strategyBody').innerHTML =
+    STRATEGY_ORDER.map(k => weightRow(s.info[k].name, s.info[k].kind, describeParams(k, cfg.params?.[k]), s.weights[k] || 0, pctCell(testByKey[k]), false)).join('') +
+    weightRow('見送り（現金）', '基準', 'どの戦略も当たらない時の受け皿', s.weights.cash || 0, '-', true);
+
+  const summary = document.getElementById('backtestSummary');
+  if (!report) {
+    summary.innerHTML = '<p class="hint">まだバックテストは実行されていません。毎週月曜 3:00 に自動で実行されます。</p>';
+  } else {
+    const tile = (label, r, note) => `
+      <div class="bt-tile">
+        <div class="stat-label">${label}</div>
+        <div class="stat-value">${pctCell(r?.ret)}</div>
+        <div class="stat-sub">最大下落 ${r ? '-' + (r.maxDD * 100).toFixed(1) + '%' : '-'}${note ? ' ・' + note : ''}</div>
+      </div>`;
+    summary.innerHTML = `
+      <div class="bt-grid">
+        ${tile('今回選ばれた設定', report.test.chosen, report.test.chosen?.trades != null ? `取引${report.test.chosen.trades}回` : '')}
+        ${tile('それまでの設定', report.test.previous)}
+        ${tile('何もせず均等保有', report.test.buyHold)}
+      </div>
+      <p class="hint">
+        ${formatDate(report.dataFrom)}〜${formatDate(report.trainEnd)} のデータで設定を選び、AIが見ていない ${formatDate(report.trainEnd)}〜${formatDate(report.dataTo)} で成績を確認（${report.coins.length}銘柄・手数料込み）。
+        ${report.adopted ? '新しい設定のほうが良かったため採用しました。' : '新しい設定は検証期間で劣ったため、それまでの設定を続けています。'}
+        最終実行: ${new Date(report.generatedAt).toLocaleString('ja-JP')}
+      </p>`;
+  }
+
+  document.getElementById('voteOrder').textContent = STRATEGY_ORDER.map(k => s.info[k].name).join('・');
+  const held = new Set((data.holdings || []).map(h => h.symbol));
+  const signals = Object.entries(s.signals || {}).sort((a, b) => b[1].score - a[1].score);
+  const voteMark = v => v > 0 ? '<span class="vote up" title="買い">▲</span>' : v < 0 ? '<span class="vote down" title="売り">▼</span>' : '<span class="vote flat" title="中立">・</span>';
+  document.getElementById('signalBody').innerHTML = signals.length ? signals.map(([symbol, sig]) => {
+    const verdict = held.has(symbol)
+      ? (sig.score <= ens.exit ? '売り水準（保有中）' : '保有継続')
+      : (sig.score >= ens.entry ? '買い水準' : '様子見');
+    return `
+      <tr>
+        <td><strong>${escapeHtml(symbol)}</strong>${held.has(symbol) ? ' <span class="hint">保有</span>' : ''}</td>
+        <td><span class="num ${signClass(sig.score)}">${sig.score > 0 ? '+' : ''}${sig.score.toFixed(2)}</span></td>
+        <td>${STRATEGY_ORDER.map(k => voteMark(sig.votes[k])).join('')}</td>
+        <td>${verdict}</td>
+      </tr>`;
+  }).join('') : '<tr><td colspan="4" class="hint">価格履歴を準備中です（最初の1時間足が確定すると表示されます）</td></tr>';
+}
 
 // ---------- held-crypto price chart ----------
 
@@ -305,6 +443,7 @@ async function refresh() {
   }
 
   latestData = data;
+  renderStrategy(data);
   renderCryptoPicker(data);
   renderCryptoChart();
 

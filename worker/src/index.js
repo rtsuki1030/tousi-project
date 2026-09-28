@@ -1,12 +1,17 @@
 // Server-side AI trading worker.
 //
-// Runs independently of any browser tab: a Cloudflare Cron Trigger fires
-// this Worker's `scheduled` handler every 5 minutes, which fetches real
-// prices, runs the same momentum + adaptive-weight decision engine as the
-// browser app, executes trades, and persists everything to Workers KV.
-// The `fetch` handler exposes a read-only JSON status endpoint the static
-// site polls to display progress -- there is no write endpoint, since the
-// whole point is that nothing here waits on a person.
+// Runs independently of any browser tab: GitHub Actions calls /api/run-now
+// every 15 minutes (Cloudflare's own cron is kept as a backup trigger). Each
+// tick fetches real prices, folds them into hourly bars, lets several
+// strategies vote (worker/src/strategies.js), learns which strategies have
+// been right, trades on the weighted vote, and persists everything to KV.
+// Strategy settings come from the weekly backtest (backtest/run.mjs), which
+// commits them to the repo; the Worker pulls that file from GitHub.
+
+import {
+  BAR_MS, MAX_BARS, MIN_BARS, FEE_RATES, STRATEGY_INFO, DEFAULT_CONFIG,
+  strategyVotes, strategyWeights, ensembleScore, updateScores, decide, sameParams,
+} from './strategies.js';
 
 const CRYPTO_ID_MAP = {
   BTC: 'bitcoin', ETH: 'ethereum', XRP: 'ripple', ADA: 'cardano',
@@ -49,19 +54,26 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function defaultStrategyState() {
+  return { config: DEFAULT_CONFIG, scores: {}, signals: {}, configCheckedAt: null };
+}
+
 function defaultState() {
   return {
+    engineVersion: 2,
     cash: INITIAL_CASH,
     initialCash: INITIAL_CASH,
     holdings: [], // {symbol, name, assetClass, quantity, avgCost, currentPrice}
-    transactions: [], // {date, type, symbol, quantity, price, amount, realizedPL}
+    transactions: [], // {date, t, type, symbol, quantity, price, amount, fee, realizedPL}
     equityHistory: [{ t: Date.now(), value: INITIAL_CASH }],
     steps: 0,
     trades: 0,
     closedTrades: 0,
     wins: 0,
-    weights: {},
-    history: {}, // symbol -> [{t, price}]
+    bars: {}, // symbol -> {hour, closes[]}: hourly closes, last one still forming
+    strategy: defaultStrategyState(),
+    symbolScores: {}, // symbol -> {score, n}: how well the ensemble has read it lately, over n bars
+    seedTried: {}, // symbol -> step of the last history download attempt
     log: [], // {t, note}
     lastRunAt: null,
     watchlist: [
@@ -76,12 +88,19 @@ function defaultState() {
 async function loadState(env) {
   const raw = await env.AI_KV.get(STATE_KEY);
   if (!raw) return defaultState();
-  try {
-    const parsed = JSON.parse(raw);
-    return { ...defaultState(), ...parsed };
-  } catch (e) {
-    return defaultState();
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { return defaultState(); }
+  const state = { ...defaultState(), ...parsed };
+  state.strategy = { ...defaultStrategyState(), ...parsed.strategy };
+  if (parsed.engineVersion !== 2) {
+    // v1 kept 30 raw ticks per symbol and one momentum rule; the holdings,
+    // cash and trade record carry over, the old learning state does not.
+    delete state.history;
+    delete state.weights;
+    state.engineVersion = 2;
+    pushLog(state, '売買エンジンを更新しました（複数戦略＋学習）。保有銘柄と資金はそのまま引き継ぎます。');
   }
+  return state;
 }
 
 async function saveState(env, state) {
@@ -212,20 +231,129 @@ async function fetchStockPrices(symbols, key, fxCache) {
   return out;
 }
 
+// ---------- hourly bars ----------
+
+// The price APIs return ~10 significant digits; 7 is plenty and keeps the
+// stored state small.
+function roundPrice(p) {
+  return Number(p.toPrecision(7));
+}
+
+// Records the latest price into the symbol's forming hourly bar. When the
+// hour has rolled over, returns the closes of the bars completed so far
+// (the moment the strategies get to vote), otherwise null.
+function recordPrice(state, symbol, assetClass, price) {
+  const hour = Math.floor(Date.now() / BAR_MS);
+  const p = roundPrice(price);
+  const b = state.bars[symbol];
+  if (!b) { state.bars[symbol] = { hour, closes: [p] }; return null; }
+  if (hour === b.hour) { b.closes[b.closes.length - 1] = p; return null; }
+  // An unchanged stock quote after the hour rolls over means the market is closed.
+  if (assetClass === 'stock' && p === b.closes[b.closes.length - 1]) return null;
+  const completed = b.closes.slice();
+  b.closes.push(p);
+  b.hour = hour;
+  if (b.closes.length > MAX_BARS) b.closes.splice(0, b.closes.length - MAX_BARS);
+  return completed;
+}
+
+function hourlyBarsFromPoints(points) {
+  const byHour = new Map();
+  (points || []).forEach(([t, p]) => { if (p > 0) byHour.set(Math.floor(t / BAR_MS), p); });
+  const hours = [...byHour.keys()].sort((a, b) => a - b);
+  if (hours.length === 0) return null;
+  const closes = [];
+  let last = byHour.get(hours[0]);
+  for (let h = hours[0]; h <= hours[hours.length - 1]; h++) {
+    if (byHour.has(h)) last = byHour.get(h);
+    closes.push(roundPrice(last));
+  }
+  return { hour: hours[hours.length - 1], closes: closes.slice(-MAX_BARS) };
+}
+
+async function seedCryptoBars(id, apiKey) {
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(id)}/market_chart?vs_currency=jpy&days=10`;
+    const res = await fetch(url, { headers: coingeckoHeaders(apiKey) });
+    if (!res.ok) { console.log('crypto history fetch failed', id, res.status); return null; }
+    return hourlyBarsFromPoints((await res.json()).prices);
+  } catch (e) {
+    console.log('crypto history fetch threw', id, String(e));
+    return null;
+  }
+}
+
+async function seedStockBars(symbol, key, fxCache) {
+  try {
+    const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1h&outputsize=${MAX_BARS}&apikey=${encodeURIComponent(key)}`;
+    const data = await (await fetch(url)).json();
+    if (data.status === 'error' || !Array.isArray(data.values)) { console.log('stock history fetch failed', symbol, JSON.stringify(data).slice(0, 200)); return null; }
+    const fx = await getFxRateToJpy(data.meta?.currency || 'USD', key, fxCache);
+    if (fx == null) return null;
+    const closes = data.values.map(v => parseFloat(v.close)).filter(p => isFinite(p) && p > 0).reverse().map(p => roundPrice(p * fx));
+    return closes.length ? { hour: Math.floor(Date.now() / BAR_MS), closes } : null;
+  } catch (e) {
+    console.log('stock history fetch threw', symbol, String(e));
+    return null;
+  }
+}
+
+// A symbol the strategies can't read yet (new to the watchlist, or right
+// after the v2 upgrade) gets its recent hourly history downloaded instead of
+// waiting days to collect it. Capped per tick to stay inside free API limits.
+const CRYPTO_SEEDS_PER_TICK = 3;
+const SEED_RETRY_TICKS = 4;
+
+async function seedMissingBars(state, universe, catalog, env, fetchStocks, fxCache) {
+  const needs = u => !(state.bars[u.symbol]?.closes.length > MIN_BARS) &&
+    state.steps - (state.seedTried[u.symbol] ?? -Infinity) >= SEED_RETRY_TICKS;
+
+  const cryptoTodo = universe.filter(u => u.assetClass === 'crypto' && needs(u)).slice(0, CRYPTO_SEEDS_PER_TICK);
+  for (const u of cryptoTodo) {
+    state.seedTried[u.symbol] = state.steps;
+    const id = resolveCryptoId(u.symbol, catalog);
+    const bars = id ? await seedCryptoBars(id, env.COINGECKO_API_KEY) : null;
+    if (bars) state.bars[u.symbol] = bars;
+  }
+
+  if (!fetchStocks || !env.TWELVE_DATA_KEY) return;
+  const stock = universe.find(u => u.assetClass === 'stock' && !isJapaneseStockSymbol(u.symbol) && needs(u));
+  if (!stock) return;
+  state.seedTried[stock.symbol] = state.steps;
+  const bars = await seedStockBars(stock.symbol, env.TWELVE_DATA_KEY, fxCache);
+  if (bars) state.bars[stock.symbol] = bars;
+  await sleep(8000); // Twelve Data free plan: 8 requests per minute
+}
+
+// ---------- strategy settings from the weekly backtest ----------
+
+const STRATEGY_CONFIG_URL = 'https://raw.githubusercontent.com/rtsuki1030/tousi-project/main/backtest/results/config.json';
+const STRATEGY_CONFIG_CHECK_MS = 6 * 60 * 60 * 1000;
+
+async function refreshStrategyConfig(state) {
+  const s = state.strategy;
+  if (s.configCheckedAt && Date.now() - s.configCheckedAt < STRATEGY_CONFIG_CHECK_MS) return;
+  s.configCheckedAt = Date.now();
+  try {
+    const res = await fetch(STRATEGY_CONFIG_URL);
+    if (!res.ok) return; // 404 until the first backtest result is committed
+    const cfg = await res.json();
+    if (!cfg.params || !cfg.ensemble || cfg.generatedAt === s.config.generatedAt) return;
+    if (!sameParams(cfg.params, s.config.params)) {
+      // Scores earned under different strategy settings don't carry over;
+      // start from what the backtest learned with the new ones.
+      s.scores = { ...(cfg.priorScores || {}) };
+    }
+    if (cfg.adoptedAt && cfg.adoptedAt !== s.config.adoptedAt) {
+      pushLog(state, 'バックテストで選ばれた新しい戦略設定に切り替えました');
+    }
+    s.config = cfg;
+  } catch (e) {
+    console.log('strategy config fetch failed', String(e));
+  }
+}
+
 // ---------- trading ----------
-
-function pushHistory(state, symbol, price) {
-  if (!state.history[symbol]) state.history[symbol] = [];
-  const arr = state.history[symbol];
-  arr.push({ t: Date.now(), price });
-  if (arr.length > 30) arr.shift();
-}
-
-function avgLast(arr, n) {
-  if (arr.length < n) return null;
-  const slice = arr.slice(-n);
-  return slice.reduce((s, v) => s + v.price, 0) / slice.length;
-}
 
 function pushLog(state, note) {
   state.log.push({ t: Date.now(), note });
@@ -233,19 +361,22 @@ function pushLog(state, note) {
 }
 
 function doBuy(state, { symbol, name, assetClass, quantity, price }) {
-  const amount = quantity * price;
+  const fee = quantity * price * (FEE_RATES[assetClass] || 0);
+  const amount = quantity * price + fee;
   if (amount > state.cash + 1e-6) return false;
   state.cash -= amount;
-  let h = state.holdings.find(x => x.symbol === symbol);
+  const h = state.holdings.find(x => x.symbol === symbol);
   if (h) {
     const totalCost = h.avgCost * h.quantity + amount;
     h.quantity += quantity;
     h.avgCost = totalCost / h.quantity;
     h.currentPrice = price;
   } else {
-    state.holdings.push({ symbol, name, assetClass, quantity, avgCost: price, currentPrice: price });
+    // avgCost includes the purchase fee, so stop-loss / take-profit and
+    // realized P&L are measured against what the position really cost.
+    state.holdings.push({ symbol, name, assetClass, quantity, avgCost: amount / quantity, currentPrice: price });
   }
-  state.transactions.push({ date: todayStr(), t: Date.now(), type: 'buy', symbol, quantity, price, amount, realizedPL: null });
+  state.transactions.push({ date: todayStr(), t: Date.now(), type: 'buy', symbol, quantity, price, amount, fee, realizedPL: null });
   if (state.transactions.length > 200) state.transactions.shift();
   return true;
 }
@@ -253,13 +384,14 @@ function doBuy(state, { symbol, name, assetClass, quantity, price }) {
 function doSell(state, { symbol, quantity, price }) {
   const h = state.holdings.find(x => x.symbol === symbol);
   if (!h || quantity > h.quantity + 1e-9) return { ok: false };
-  const amount = quantity * price;
-  const realized = (price - h.avgCost) * quantity;
+  const fee = quantity * price * (FEE_RATES[h.assetClass] || 0);
+  const amount = quantity * price - fee;
+  const realized = amount - h.avgCost * quantity;
   state.cash += amount;
   h.quantity -= quantity;
   h.currentPrice = price;
   if (h.quantity <= 1e-9) state.holdings = state.holdings.filter(x => x.symbol !== symbol);
-  state.transactions.push({ date: todayStr(), t: Date.now(), type: 'sell', symbol, quantity, price, amount, realizedPL: realized });
+  state.transactions.push({ date: todayStr(), t: Date.now(), type: 'sell', symbol, quantity, price, amount, fee, realizedPL: realized });
   if (state.transactions.length > 200) state.transactions.shift();
   return { ok: true, realized };
 }
@@ -268,22 +400,37 @@ function totalAssets(state) {
   return state.cash + state.holdings.reduce((s, h) => s + h.quantity * h.currentPrice, 0);
 }
 
+// Pegged coins never move, so there is nothing for the strategies to trade.
+const STABLECOIN_SYMBOLS = new Set(['USDT', 'USDC', 'DAI', 'FDUSD', 'USDE', 'USDS', 'PYUSD', 'TUSD', 'BUSD', 'USD1', 'USDD', 'RLUSD', 'USDTB', 'USDF', 'USDG', 'GHO', 'FRAX', 'EURC']);
+// A symbol is judged only after the ensemble has read it for a day of hourly bars.
+const WATCH_MIN_SCORED_BARS = 24;
+
+// Less than 2% between the 10-day high and low: a pegged or fund-like token.
+function barelyMoves(bars) {
+  if (!bars || bars.closes.length <= MIN_BARS) return false;
+  return Math.max(...bars.closes) / Math.min(...bars.closes) < 1.02;
+}
+
 function autoDiscover(state, catalog) {
   if (state.steps % AI_DISCOVERY_EVERY_N_TICKS !== 0) return;
   const heldSymbols = new Set(state.holdings.map(h => h.symbol));
 
-  const prunable = state.watchlist.filter(w =>
-    !w.pinned && !heldSymbols.has(w.symbol) &&
-    (state.steps - w.addedAtStep) >= AI_DISCOVERY_EVERY_N_TICKS &&
-    (state.weights[w.symbol] || 0) <= -0.3
-  );
-  if (prunable.length > 0) {
-    const gone = prunable[Math.floor(Math.random() * prunable.length)];
+  const removable = state.watchlist.filter(w => !w.pinned && !heldSymbols.has(w.symbol));
+  const flat = removable.filter(w => STABLECOIN_SYMBOLS.has(w.symbol) || barelyMoves(state.bars[w.symbol]));
+  const misread = removable.filter(w => {
+    const s = state.symbolScores[w.symbol];
+    return s && s.n >= WATCH_MIN_SCORED_BARS && s.score < 0;
+  });
+  if (flat.length > 0) {
+    state.watchlist = state.watchlist.filter(w => !flat.includes(w));
+    pushLog(state, `ウォッチリストから除外（値動きがほとんどない）: ${flat.map(w => w.symbol).join(', ')}`);
+  } else if (misread.length > 0) {
+    const gone = misread[Math.floor(Math.random() * misread.length)];
     state.watchlist = state.watchlist.filter(w => w.symbol !== gone.symbol);
-    pushLog(state, `ウォッチリストから除外（信頼度が低い）: ${gone.symbol}`);
+    pushLog(state, `ウォッチリストから除外（戦略の読みが外れ続けた）: ${gone.symbol}`);
   }
 
-  const excluded = new Set([...heldSymbols, ...state.watchlist.map(w => w.symbol)]);
+  const excluded = new Set([...heldSymbols, ...state.watchlist.map(w => w.symbol), ...STABLECOIN_SYMBOLS]);
 
   const cryptoCount = state.watchlist.filter(w => w.assetClass === 'crypto' && !heldSymbols.has(w.symbol)).length;
   if (cryptoCount < state.cryptoWatchCap && catalog) {
@@ -307,12 +454,31 @@ function autoDiscover(state, catalog) {
   }
 }
 
+function pruneBySymbol(obj, keep) {
+  Object.keys(obj).forEach(k => { if (!keep.has(k)) delete obj[k]; });
+}
+
+function formatYenPrice(p) {
+  return `¥${p.toLocaleString('ja-JP', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 6 })}`;
+}
+
+const SELL_REASON = {
+  stopLoss: d => `損切り（取得単価比 ${(d.change * 100).toFixed(1)}%）`,
+  takeProfit: d => `利確（取得単価比 +${(d.change * 100).toFixed(1)}%）`,
+  signal: (d, score) => `シグナル悪化（合議スコア ${score.toFixed(2)}）`,
+};
+
 async function runAiTick(env) {
   const state = await loadState(env);
   const twelveDataKey = env.TWELVE_DATA_KEY || '';
 
   state.steps++;
   state.lastRunAt = Date.now();
+
+  await refreshStrategyConfig(state);
+  const config = state.strategy.config;
+  const ensemble = { ...DEFAULT_CONFIG.ensemble, ...config.ensemble };
+  const learning = { ...DEFAULT_CONFIG.learning, ...config.learning };
 
   const catalog = await refreshCryptoCatalogIfStale(env);
   autoDiscover(state, catalog);
@@ -321,21 +487,19 @@ async function runAiTick(env) {
   state.watchlist.forEach(w => { bySymbol[w.symbol] = w; });
   state.holdings.forEach(h => { bySymbol[h.symbol] = h; });
   const universe = Object.values(bySymbol);
+  const inUniverse = new Set(Object.keys(bySymbol));
+  [state.bars, state.strategy.signals, state.symbolScores, state.seedTried].forEach(o => pruneBySymbol(o, inUniverse));
 
-  const cryptoSymbols = universe.filter(x => x.assetClass === 'crypto').map(x => x.symbol);
-  const stockSymbols = universe.filter(x => x.assetClass === 'stock').map(x => x.symbol);
-
-  const cryptoPrices = cryptoSymbols.length ? await fetchCryptoPrices(cryptoSymbols, catalog, env.COINGECKO_API_KEY) : {};
   const fxCache = {};
   const shouldFetchStocks = state.steps % STOCK_FETCH_EVERY_N_TICKS === 0;
+  const cryptoSymbols = universe.filter(x => x.assetClass === 'crypto').map(x => x.symbol);
+  const stockSymbols = universe.filter(x => x.assetClass === 'stock').map(x => x.symbol);
+  const cryptoPrices = cryptoSymbols.length ? await fetchCryptoPrices(cryptoSymbols, catalog, env.COINGECKO_API_KEY) : {};
   const stockPrices = (stockSymbols.length && shouldFetchStocks) ? await fetchStockPrices(stockSymbols, twelveDataKey, fxCache) : {};
   const allPrices = { ...cryptoPrices, ...stockPrices };
-
-  Object.entries(allPrices).forEach(([symbol, price]) => {
-    pushHistory(state, symbol, price);
-    const h = state.holdings.find(x => x.symbol === symbol);
-    if (h) h.currentPrice = price;
-  });
+  // History downloads come after the price fetch so they can only ever use
+  // up rate-limit budget the prices didn't need.
+  await seedMissingBars(state, universe, catalog, env, shouldFetchStocks, fxCache);
 
   if (Object.keys(allPrices).length === 0) {
     pushLog(state, '価格を取得できませんでした（APIキー未設定、またはネットワークエラー）');
@@ -343,57 +507,69 @@ async function runAiTick(env) {
     return state;
   }
 
-  const lr = 0.5;
-  universe.forEach(u => {
-    const symbol = u.symbol;
-    const hist = state.history[symbol];
-    if (!hist || hist.length < 4) return;
-    const currentPrice = hist[hist.length - 1].price;
+  const newBars = [];
+  Object.entries(allPrices).forEach(([symbol, price]) => {
     const h = state.holdings.find(x => x.symbol === symbol);
-
-    const shortMA = avgLast(hist, 2);
-    const longMA = avgLast(hist, 4);
-    if (shortMA == null || longMA == null || longMA <= 0) return;
-    const momentum = (shortMA - longMA) / longMA;
-
-    const prevDecision = state.weights['_last_' + symbol];
-    if (prevDecision) {
-      const realizedReturn = (currentPrice - prevDecision.priceAtDecision) / prevDecision.priceAtDecision;
-      const agreement = Math.sign(prevDecision.momentum) * Math.sign(realizedReturn);
-      const w = state.weights[symbol] || 0;
-      state.weights[symbol] = Math.max(-3, Math.min(3, w + lr * agreement * Math.abs(realizedReturn) * 30));
-    }
-
-    const weight = state.weights[symbol] || 0;
-    const score = momentum * (1 + weight);
-
-    let action = 'hold';
-    if (score > 0.006) action = 'buy';
-    else if (score < -0.006 && h && h.quantity > 0) action = 'sell';
-
-    if (action === 'buy') {
-      const budget = Math.min(state.cash * 0.15, state.cash);
-      const qty = u.assetClass === 'crypto' ? (budget > 0 ? +(budget / currentPrice).toFixed(6) : 0) : Math.floor(budget / currentPrice);
-      if (qty > 0) {
-        const isNew = !h;
-        if (doBuy(state, { symbol, name: u.name, assetClass: u.assetClass, quantity: qty, price: currentPrice })) {
-          state.trades++;
-          pushLog(state, `${isNew ? '新規購入' : '買い'}: ${symbol} ${qty} @ ¥${Math.round(currentPrice).toLocaleString('ja-JP')}（モメンタム${(momentum * 100).toFixed(1)}% / 信頼度${weight.toFixed(2)}）`);
-        }
-      }
-    } else if (action === 'sell' && h) {
-      const won = currentPrice > h.avgCost;
-      const result = doSell(state, { symbol, quantity: h.quantity, price: currentPrice });
-      if (result.ok) {
-        state.trades++;
-        state.closedTrades++;
-        if (won) state.wins++;
-        pushLog(state, `売り: ${symbol}（${won ? '含み益で決済' : '含み損で決済'} / 信頼度${weight.toFixed(2)}）`);
-      }
-    }
-
-    state.weights['_last_' + symbol] = { momentum, priceAtDecision: currentPrice };
+    if (h) h.currentPrice = price;
+    const completed = recordPrice(state, symbol, bySymbol[symbol].assetClass, price);
+    if (completed && completed.length > MIN_BARS) newBars.push({ symbol, completed });
   });
+
+  // Learn first: credit each strategy's vote on the previous bar with what
+  // the price actually did next. Then vote on the bar that just completed.
+  newBars.forEach(({ symbol, completed }) => {
+    const n = completed.length;
+    const ret = completed[n - 1] / completed[n - 2] - 1;
+    updateScores(state.strategy.scores, strategyVotes(completed, n - 2, config.params), ret, learning.decay);
+    const prev = state.strategy.signals[symbol];
+    if (prev) {
+      const s = state.symbolScores[symbol] || { score: 0, n: 0 };
+      state.symbolScores[symbol] = { score: s.score * 0.98 + prev.score * ret, n: s.n + 1 };
+    }
+  });
+  const weights = strategyWeights(state.strategy.scores, learning.eta);
+  const scoreBySymbol = {};
+  newBars.forEach(({ symbol, completed }) => {
+    const votes = strategyVotes(completed, completed.length - 1, config.params);
+    const score = ensembleScore(votes, weights);
+    scoreBySymbol[symbol] = score;
+    state.strategy.signals[symbol] = { t: Date.now(), score, votes };
+  });
+
+  // Exits run every tick (stop-loss / take-profit don't wait for the hour);
+  // signal exits and entries only when a fresh hourly vote exists.
+  for (const h of [...state.holdings]) {
+    if (allPrices[h.symbol] == null) continue;
+    const score = scoreBySymbol[h.symbol] ?? null;
+    const d = decide({ score, held: true, price: h.currentPrice, avgCost: h.avgCost, ensemble });
+    if (d.action !== 'sell') continue;
+    const result = doSell(state, { symbol: h.symbol, quantity: h.quantity, price: h.currentPrice });
+    if (!result.ok) continue;
+    state.trades++;
+    state.closedTrades++;
+    if (result.realized > 0) state.wins++;
+    pushLog(state, `売り: ${h.symbol} ${SELL_REASON[d.reason](d, score)} 確定損益 ${result.realized >= 0 ? '+' : '-'}¥${Math.round(Math.abs(result.realized)).toLocaleString('ja-JP')}`);
+  }
+
+  const equity = totalAssets(state);
+  const candidates = Object.entries(scoreBySymbol)
+    .filter(([symbol]) => !state.holdings.some(h => h.symbol === symbol))
+    .filter(([, score]) => decide({ score, held: false, ensemble }).action === 'buy')
+    .sort((a, b) => b[1] - a[1]);
+  for (const [symbol, score] of candidates) {
+    const budget = Math.min(ensemble.positionFraction * equity, state.cash);
+    if (budget < 0.01 * equity) break;
+    const u = bySymbol[symbol];
+    const price = allPrices[symbol];
+    const perUnit = price * (1 + (FEE_RATES[u.assetClass] || 0));
+    const qty = u.assetClass === 'crypto' ? Math.floor((budget / perUnit) * 1e6) / 1e6 : Math.floor(budget / perUnit);
+    if (qty <= 0) continue;
+    if (!doBuy(state, { symbol, name: u.name, assetClass: u.assetClass, quantity: qty, price })) continue;
+    state.trades++;
+    const agree = Object.entries(state.strategy.signals[symbol].votes)
+      .filter(([, v]) => v > 0).map(([k]) => STRATEGY_INFO[k].name).join('・');
+    pushLog(state, `新規購入: ${symbol} ${qty} @ ${formatYenPrice(price)}（合議スコア ${score.toFixed(2)} / 買い票: ${agree || 'なし'}）`);
+  }
 
   state.equityHistory.push({ t: Date.now(), value: totalAssets(state) });
   if (state.equityHistory.length > 500) state.equityHistory.shift();
@@ -523,10 +699,11 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/api/state') {
       const state = await loadState(env);
-      // Lets the status page pull price charts straight from CoinGecko.
+      // Lets the status page pull price charts straight from CoinGecko, and
+      // tells the weekly backtest which coins the AI is trading.
       const catalog = (await loadCryptoCatalog(env))?.map || null;
       const cryptoIds = {};
-      state.holdings.filter(h => h.assetClass === 'crypto').forEach(h => {
+      [...state.holdings, ...state.watchlist].filter(h => h.assetClass === 'crypto').forEach(h => {
         const id = resolveCryptoId(h.symbol, catalog);
         if (id) cryptoIds[h.symbol] = id;
       });
@@ -542,7 +719,20 @@ export default {
         trades: state.trades,
         closedTrades: state.closedTrades,
         wins: state.wins,
-        weights: Object.fromEntries(Object.entries(state.weights).filter(([k]) => !k.startsWith('_last_'))),
+        strategy: {
+          info: STRATEGY_INFO,
+          weights: strategyWeights(state.strategy.scores, (state.strategy.config.learning || DEFAULT_CONFIG.learning).eta),
+          scores: state.strategy.scores,
+          signals: state.strategy.signals,
+          config: {
+            source: state.strategy.config.source,
+            generatedAt: state.strategy.config.generatedAt,
+            adoptedAt: state.strategy.config.adoptedAt || null,
+            params: state.strategy.config.params,
+            ensemble: state.strategy.config.ensemble,
+          },
+          report: state.strategy.config.report,
+        },
         watchlist: state.watchlist,
         log: state.log.slice(-40).reverse(),
         lastRunAt: state.lastRunAt,
