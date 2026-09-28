@@ -22,6 +22,7 @@
 - 「本日の損益」は前回レポート時点の総資産との差。1日1回までしか送らない（再実行しても重複しない）
 - Webhook URLは Worker のシークレット `DISCORD_WEBHOOK_URL`
 - 送らずに中身だけ確認：`https://tousi-ai-worker.rtsuki1030.workers.dev/api/daily-report?dry=1`
+- 毎週日曜21:00には週次レポート（今週の損益・取引・戦略の重みの変化・学んだこと・バックテスト結果）も送信（GitHub Actions「Weekly learning report」→ `/api/weekly-report`、確認は `?dry=1`）
 
 ## AIの戦略と学習（エンジンv2）
 

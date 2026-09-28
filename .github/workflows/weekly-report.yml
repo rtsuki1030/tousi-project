@@ -1,0 +1,19 @@
+name: Weekly learning report
+
+# Every Sunday 21:00 JST (12:00 UTC): asks the Worker to post what the AI
+# learned this week -- P&L, trades, strategy weight changes, backtest result
+# -- to Discord. The Worker posts at most once per 6 days, so a late run or
+# a manual re-run won't post twice.
+
+on:
+  schedule:
+    - cron: '0 12 * * 0'
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send weekly report
+        run: |
+          curl -sf -m 60 "https://tousi-ai-worker.rtsuki1030.workers.dev/api/weekly-report"

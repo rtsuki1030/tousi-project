@@ -49,6 +49,8 @@ const AI_DISCOVERY_EVERY_N_TICKS = 3;
 // that budget by mid-morning, so stocks are only refreshed on every 3rd tick.
 const STOCK_FETCH_EVERY_N_TICKS = 3;
 const AI_DISCOVERY_TOP_CRYPTO = 150;
+// Enough to cover a full week of trades for the weekly report.
+const MAX_TRANSACTIONS = 400;
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -377,11 +379,11 @@ function doBuy(state, { symbol, name, assetClass, quantity, price }) {
     state.holdings.push({ symbol, name, assetClass, quantity, avgCost: amount / quantity, currentPrice: price });
   }
   state.transactions.push({ date: todayStr(), t: Date.now(), type: 'buy', symbol, quantity, price, amount, fee, realizedPL: null });
-  if (state.transactions.length > 200) state.transactions.shift();
+  if (state.transactions.length > MAX_TRANSACTIONS) state.transactions.shift();
   return true;
 }
 
-function doSell(state, { symbol, quantity, price }) {
+function doSell(state, { symbol, quantity, price, reason = null }) {
   const h = state.holdings.find(x => x.symbol === symbol);
   if (!h || quantity > h.quantity + 1e-9) return { ok: false };
   const fee = quantity * price * (FEE_RATES[h.assetClass] || 0);
@@ -391,8 +393,8 @@ function doSell(state, { symbol, quantity, price }) {
   h.quantity -= quantity;
   h.currentPrice = price;
   if (h.quantity <= 1e-9) state.holdings = state.holdings.filter(x => x.symbol !== symbol);
-  state.transactions.push({ date: todayStr(), t: Date.now(), type: 'sell', symbol, quantity, price, amount, fee, realizedPL: realized });
-  if (state.transactions.length > 200) state.transactions.shift();
+  state.transactions.push({ date: todayStr(), t: Date.now(), type: 'sell', symbol, quantity, price, amount, fee, realizedPL: realized, reason });
+  if (state.transactions.length > MAX_TRANSACTIONS) state.transactions.shift();
   return { ok: true, realized };
 }
 
@@ -543,7 +545,7 @@ async function runAiTick(env) {
     const score = scoreBySymbol[h.symbol] ?? null;
     const d = decide({ score, held: true, price: h.currentPrice, avgCost: h.avgCost, ensemble });
     if (d.action !== 'sell') continue;
-    const result = doSell(state, { symbol: h.symbol, quantity: h.quantity, price: h.currentPrice });
+    const result = doSell(state, { symbol: h.symbol, quantity: h.quantity, price: h.currentPrice, reason: d.reason });
     if (!result.ok) continue;
     state.trades++;
     state.closedTrades++;
@@ -663,19 +665,150 @@ async function sendDailyReport(env, { dryRun = false } = {}) {
   const { total, embed } = buildDailyReport(state, prev);
   if (dryRun) return { ok: true, dryRun: true, embed };
 
+  const sent = await postToDiscord(env, embed);
+  if (!sent.ok) return sent;
+  await env.AI_KV.put(DAILY_REPORT_KEY, JSON.stringify({ date: today, value: total, at: Date.now() }));
+  return { ok: true, sent: today };
+}
+
+// ---------- weekly learning report (Discord) ----------
+
+// Holds total assets and strategy weights as of the last weekly report, so
+// the next one can say what the AI learned over the week.
+const WEEKLY_REPORT_KEY = 'weekly_report_v1';
+const WEEKLY_REPORT_CRON = '0 12 * * SUN'; // Sunday 21:00 JST
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const MIN_WEEKLY_GAP_MS = 6 * 24 * 60 * 60 * 1000;
+
+const SELL_REASON_LABEL = { stopLoss: '損切り', takeProfit: '利確', signal: 'シグナル' };
+
+function strategyLabel(key) {
+  return key === 'cash' ? '見送り（現金）' : STRATEGY_INFO[key].name;
+}
+
+function buildWeeklyReport(state, prev) {
+  const now = Date.now();
+  const since = prev ? prev.at : now - WEEK_MS;
+  const total = totalAssets(state);
+
+  // First report: equityHistory only reaches back ~5 days, so compare with its oldest point.
+  let base = state.initialCash, baseLabel = '運用開始比';
+  if (prev) {
+    base = prev.value;
+    baseLabel = `前回レポート（${jstDateStr(prev.at)}）比`;
+  } else {
+    const p = state.equityHistory.find(x => x.t >= since) || state.equityHistory[0];
+    if (p) { base = p.value; baseLabel = `${jstDateStr(p.t)}比`; }
+  }
+  const change = total - base;
+
+  const tx = state.transactions.filter(t => t.t && t.t > since);
+  const buys = tx.filter(t => t.type === 'buy');
+  const sells = tx.filter(t => t.type === 'sell');
+  const realized = sells.reduce((s, t) => s + (t.realizedPL || 0), 0);
+  const wins = sells.filter(t => t.realizedPL > 0).length;
+  const reasonCounts = {};
+  sells.forEach(t => { const k = SELL_REASON_LABEL[t.reason] || 'その他'; reasonCounts[k] = (reasonCounts[k] || 0) + 1; });
+  const reasonText = Object.entries(reasonCounts).map(([k, n]) => `${k}${n}`).join('・');
+  let tradeText = `買い ${buys.length}件 / 売り ${sells.length}件${sells.length ? `（勝ち ${wins}件・勝率 ${Math.round((wins / sells.length) * 100)}%）` : ''}\n確定損益 ${signedYen(realized)}`;
+  if (reasonText) tradeText += `\n売却理由: ${reasonText}`;
+  if (sells.length) {
+    const sorted = [...sells].sort((a, b) => b.realizedPL - a.realizedPL);
+    tradeText += `\nベスト: ${sorted[0].symbol} ${signedYen(sorted[0].realizedPL)} ／ ワースト: ${sorted[sorted.length - 1].symbol} ${signedYen(sorted[sorted.length - 1].realizedPL)}`;
+  }
+
+  const learning = { ...DEFAULT_CONFIG.learning, ...state.strategy.config.learning };
+  const weights = strategyWeights(state.strategy.scores, learning.eta);
+  const keys = Object.keys(weights).sort((a, b) => weights[b] - weights[a]);
+  const delta = k => (prev?.weights?.[k] != null ? (weights[k] - prev.weights[k]) * 100 : null);
+  const weightText = keys.map(k => {
+    const d = delta(k);
+    const dText = d == null ? '' : `（${d >= 0.5 ? '↑' : d <= -0.5 ? '↓' : '→'} ${d >= 0 ? '+' : ''}${d.toFixed(0)}pt）`;
+    return `${strategyLabel(k)}  ${Math.round(weights[k] * 100)}%${dText}`;
+  }).join('\n');
+
+  const strategyKeys = keys.filter(k => k !== 'cash');
+  const lessons = [];
+  if (prev?.weights) {
+    const byDelta = [...strategyKeys].sort((a, b) => delta(b) - delta(a));
+    const up = byDelta[0], down = byDelta[byDelta.length - 1];
+    if (delta(up) >= 0.5) lessons.push(`最も信頼を上げた戦略: ${strategyLabel(up)}（${STRATEGY_INFO[up].kind}・+${delta(up).toFixed(0)}pt）`);
+    if (delta(down) <= -0.5) lessons.push(`最も信頼を下げた戦略: ${strategyLabel(down)}（${STRATEGY_INFO[down].kind}・${delta(down).toFixed(0)}pt）`);
+  }
+  const trendW = strategyKeys.filter(k => STRATEGY_INFO[k].kind === '順張り').reduce((s, k) => s + weights[k], 0);
+  const revertW = strategyKeys.filter(k => STRATEGY_INFO[k].kind === '逆張り').reduce((s, k) => s + weights[k], 0);
+  lessons.push(trendW > revertW * 1.2
+    ? `相場の読み: 順張り（流れに乗る）が優勢（順張り${Math.round(trendW * 100)}% / 逆張り${Math.round(revertW * 100)}%）`
+    : revertW > trendW * 1.2
+      ? `相場の読み: 逆張り（行き過ぎの戻りを狙う）が優勢（逆張り${Math.round(revertW * 100)}% / 順張り${Math.round(trendW * 100)}%）`
+      : `相場の読み: 順張りと逆張りが拮抗（順張り${Math.round(trendW * 100)}% / 逆張り${Math.round(revertW * 100)}%）`);
+  lessons.push(weights.cash >= Math.max(...strategyKeys.map(k => weights[k]))
+    ? `慎重度: 高め — どの戦略も当たりにくく「見送り」の重みが最大（${Math.round(weights.cash * 100)}%）`
+    : `慎重度: 通常 — 「見送り」の重みは${Math.round(weights.cash * 100)}%、${strategyLabel(keys.find(k => k !== 'cash'))}を中心に判断`);
+
+  const read = Object.entries(state.symbolScores)
+    .filter(([, s]) => s && s.n >= WATCH_MIN_SCORED_BARS)
+    .sort((a, b) => b[1].score - a[1].score);
+  if (read.length >= 2) {
+    const good = read.filter(([, s]) => s.score > 0).slice(0, 3).map(([k]) => k);
+    const bad = read.filter(([, s]) => s.score < 0).slice(-3).reverse().map(([k]) => k);
+    if (good.length) lessons.push(`読みが当たりやすい銘柄: ${good.join(', ')}`);
+    if (bad.length) lessons.push(`読みが外れやすい銘柄: ${bad.join(', ')}`);
+  }
+
+  const report = state.strategy.config.report;
+  const backtestText = report
+    ? `${jstDateStr(Date.parse(report.generatedAt))} 実行・${report.adopted ? '新しい設定を採用' : '設定は据え置き'}\n` +
+      `検証30日（手数料込み）: AI ${pct(report.test.chosen.ret)} / それまでの設定 ${pct(report.test.previous.ret)} / 均等保有 ${pct(report.test.buyHold.ret)}\n次回: 月曜 3:00`
+    : 'まだ実行されていません（次回: 月曜 3:00）';
+
+  const color = change > 0 ? 0x2e9e5b : change < 0 ? 0xd64545 : 0x888888;
+  return {
+    total,
+    weights,
+    embed: {
+      title: `🧠 AI運用 週次レポート（${jstDateStr(since)}〜${jstDateStr(now)}）`,
+      color,
+      fields: [
+        { name: '今週の損益', value: `${signedYen(change)}（${pct(base > 0 ? change / base : 0)}）\n${baseLabel}`, inline: true },
+        { name: '総資産', value: `${yen(total)}\n累計 ${signedYen(total - state.initialCash)}`, inline: true },
+        { name: '今週の取引', value: tradeText },
+        { name: '戦略の重み（学習結果）', value: weightText + (prev?.weights ? '' : '\n※初回のため先週との比較はありません') },
+        { name: '今週学んだこと', value: lessons.join('\n').slice(0, 1024) },
+        { name: 'バックテスト（週1回）', value: backtestText },
+      ],
+      footer: { text: '重みは各戦略の「次の1時間」の読みが当たった度合いで自動調整されます' },
+      timestamp: new Date(now).toISOString(),
+    },
+  };
+}
+
+async function postToDiscord(env, embed) {
   if (!env.DISCORD_WEBHOOK_URL) return { ok: false, error: 'DISCORD_WEBHOOK_URL is not set' };
   const res = await fetch(env.DISCORD_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: '投資AIレポート', embeds: [embed] }),
   });
-  if (!res.ok) {
-    const body = await res.text();
-    console.log('discord webhook failed', res.status, body);
-    return { ok: false, error: `discord ${res.status}` };
-  }
-  await env.AI_KV.put(DAILY_REPORT_KEY, JSON.stringify({ date: today, value: total, at: Date.now() }));
-  return { ok: true, sent: today };
+  if (res.ok) return { ok: true };
+  console.log('discord webhook failed', res.status, await res.text());
+  return { ok: false, error: `discord ${res.status}` };
+}
+
+// At most one per 6 days, so a late or repeated trigger can't double-post.
+async function sendWeeklyReport(env, { dryRun = false } = {}) {
+  let prev = null;
+  try { prev = JSON.parse(await env.AI_KV.get(WEEKLY_REPORT_KEY) || 'null'); } catch (e) { prev = null; }
+  if (!dryRun && prev && Date.now() - prev.at < MIN_WEEKLY_GAP_MS) return { ok: true, skipped: 'already sent this week' };
+
+  const state = await loadState(env);
+  const { total, weights, embed } = buildWeeklyReport(state, prev);
+  if (dryRun) return { ok: true, dryRun: true, embed };
+
+  const sent = await postToDiscord(env, embed);
+  if (!sent.ok) return sent;
+  await env.AI_KV.put(WEEKLY_REPORT_KEY, JSON.stringify({ value: total, weights, at: Date.now() }));
+  return { ok: true, sent: jstDateStr() };
 }
 
 // ---------- HTTP status endpoint ----------
@@ -752,11 +885,18 @@ export default {
       return jsonResponse(result, result.ok ? 200 : 500);
     }
 
+    if (url.pathname === '/api/weekly-report') {
+      // ?dry=1 previews the report without posting to Discord
+      const result = await sendWeeklyReport(env, { dryRun: url.searchParams.get('dry') === '1' });
+      return jsonResponse(result, result.ok ? 200 : 500);
+    }
+
     return new Response('tousi-ai-worker: see /api/state', { headers: CORS_HEADERS });
   },
 
   async scheduled(event, env, ctx) {
     if (event.cron === DAILY_REPORT_CRON) ctx.waitUntil(sendDailyReport(env));
+    else if (event.cron === WEEKLY_REPORT_CRON) ctx.waitUntil(sendWeeklyReport(env));
     else ctx.waitUntil(runAiTick(env));
   },
 };
