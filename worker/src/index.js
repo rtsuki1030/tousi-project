@@ -788,7 +788,10 @@ function buildWeeklyReport(state, prev) {
 // (DISCORD_WEBHOOK_URL_LEARN, falling back to the daily channel if unset).
 async function postToDiscord(webhookUrl, embed) {
   if (!webhookUrl) return { ok: false, error: 'Discord webhook URL is not set' };
-  const res = await fetch(webhookUrl, {
+  if (!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(webhookUrl.trim())) {
+    return { ok: false, error: 'Discord webhook secret is not a webhook URL (expected https://discord.com/api/webhooks/...)' };
+  }
+  const res = await fetch(webhookUrl.trim(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: '投資AIレポート', embeds: [embed] }),
