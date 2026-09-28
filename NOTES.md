@@ -1,13 +1,18 @@
-# 作業メモ（2026-09-07〜08）
+# 作業メモ
+
+最終更新：2026-09-28
 
 ## 現在の構成
 
 | 場所 | 役割 | URL |
 |---|---|---|
 | GitHub Pages | 自分で操作するメインアプリ（手動売買・グラフ・タブを開いている間だけ動くAI） | https://rtsuki1030.github.io/tousi-project/ |
-| GitHub Pages | サーバー側AIの状況確認（読み取り専用） | https://rtsuki1030.github.io/tousi-project/ai-status.html |
+| GitHub Pages | サーバー側AIの状況確認（読み取り専用。戦略の重み・チャートもここ） | https://rtsuki1030.github.io/tousi-project/ai-status.html |
 | Cloudflare Workers | サーバー側AIの実行エンジン（別会計のポートフォリオ） | https://tousi-ai-worker.rtsuki1030.workers.dev |
-| GitHub Actions | サーバー側AIを5分ごとに叩いて動かすトリガー | リポジトリの Actions タブ「AI trading tick」 |
+| GitHub Actions「AI trading tick」 | サーバー側AIを15分ごとに動かす | リポジトリの Actions タブ |
+| GitHub Actions「Daily P&L report」 | 毎日21:00に日次レポートをDiscord #shuusi へ | 同上 |
+| GitHub Actions「Weekly learning report」 | 毎週日曜21:00に週次レポートをDiscord #learn へ | 同上 |
+| GitHub Actions「Weekly strategy backtest」 | 毎週月曜3:00にバックテストして戦略の設定を更新 | 同上 |
 | GitHub リポジトリ | ソースコード一式 | https://github.com/rtsuki1030/tousi-project |
 
 ## できること
@@ -15,38 +20,87 @@
 - 米国株（Twelve Data）・暗号資産（CoinGecko）の実価格取得と自動売買
 - AIが自分で新しい投資先（暗号資産は時価総額上位、株式は主要企業プール）を発見してウォッチリストに追加
 - サーバー側AIは、ブラウザを閉じてもPCをスリープさせても24時間自動で動き続ける
+- 複数の戦略を組み合わせ、どれが当たっているかを学習しながら売買（下記「AIの戦略と学習」）
+- 日次・週次のレポートをDiscordに自動送信
 
-## 日次収支レポート
+## Discordレポート
 
-- 毎日21:00（日本時間）に、サーバー側AIの収支をDiscordへ送信（GitHub Actions「Daily P&L report」→ Worker の `/api/daily-report`）
-- 「本日の損益」は前回レポート時点の総資産との差。1日1回までしか送らない（再実行しても重複しない）
-- 送信先：日次レポートは #shuusi（Worker のシークレット `DISCORD_WEBHOOK_URL`）、週次レポートは #learn（`DISCORD_WEBHOOK_URL_LEARN`、未設定なら #shuusi に送信）
-- 送らずに中身だけ確認：`https://tousi-ai-worker.rtsuki1030.workers.dev/api/daily-report?dry=1`
-- 毎週日曜21:00には週次レポート（今週の損益・取引・戦略の重みの変化・学んだこと・バックテスト結果）も送信（GitHub Actions「Weekly learning report」→ `/api/weekly-report`、確認は `?dry=1`）
+| | 日次レポート | 週次レポート |
+|---|---|---|
+| いつ | 毎日21:00 | 毎週日曜21:00 |
+| どこへ | #shuusi | #learn |
+| 内容 | 総資産・本日の損益・累計損益・本日の取引・保有銘柄 | 今週の損益・取引（売却理由の内訳・ベスト/ワースト）・戦略の重みの変化・今週学んだこと・バックテスト結果 |
+| Workerのシークレット | `DISCORD_WEBHOOK_URL` | `DISCORD_WEBHOOK_URL_LEARN`（未設定なら #shuusi に送信） |
+| 重複防止 | 1日1回まで | 6日に1回まで |
+| 中身だけ確認 | `/api/daily-report?dry=1` | `/api/weekly-report?dry=1` |
+
+- 「本日の損益」「今週の損益」は、前回レポートを送った時点の総資産との差
+- 手動で送るときは Actions タブの各ワークフロー →「Run workflow」
+- GitHub Actionsの定期実行は混雑時に数分〜数十分遅れることがある
 
 ## AIの戦略と学習（エンジンv2）
 
 - 価格を1時間足にまとめ、5つの戦略（モメンタム・移動平均クロス・RSI・ボリンジャーバンド・ブレイクアウト）が毎時「買い/売り/中立」を投票
-- 各戦略の票が次の1時間で当たったかで重みを自動調整（当たらない時は「見送り（現金）」の重みが増えて慎重になる）
-- 重み付き合議スコアが買い基準以上で購入（1銘柄あたり総資産の10%）、売り基準以下・損切り・利確で売却。手数料（暗号資産0.15%・株0.1%）込みで計算
+- 各戦略の票が次の1時間で当たったかで重みを自動調整。どの戦略も当たらない時は「見送り（現金）」の重みが増えて新規購入に慎重になる
+- 重み付きの合議スコアが買い基準以上で購入（1銘柄あたり総資産の10%）。売り基準以下・損切り・利確で売却。手数料（暗号資産0.15%・株0.1%）込みで計算
 - 戦略の中身は `worker/src/strategies.js`（本番とバックテストで共通）
-- **週1回のバックテスト**（GitHub Actions「Weekly strategy backtest」、月曜3:00）：過去90日の1時間足で、前半60日で設定を選び、後半30日で検証。以前の設定より良い時だけ採用し、`backtest/results/config.json` にコミット → Workerが6時間ごとにGitHubから読み込む
-- 手元でも `node backtest/run.mjs` で実行可能。GitHubのリポジトリシークレットに `COINGECKO_API_KEY` を登録すると速くなる（なくても動く）
-- バックテストは現在、暗号資産のみ（Twelve Dataの無料枠を本番の株価取得と取り合わないため）
+- **週1回のバックテスト**（月曜3:00）：過去90日の1時間足で、前半60日で設定を選び、AIが見ていない後半30日で検証。それまでの設定より良い時だけ採用し、`backtest/results/config.json` にコミット → Workerが6時間ごとにGitHubから読み込む
+- 手元でも `node backtest/run.mjs` で実行できる（APIキーなしだと10〜15分かかる）
+- バックテストは暗号資産のみ（Twelve Dataの無料枠を本番の株価取得と取り合わないため）
+
+## 2026-09-28 にやったこと
+
+1. **日次収支レポート**を作成（毎日21:00・Discord）
+2. 状況ページに**保有暗号資産の価格チャート**を追加（1日/7日/30日/90日、平均取得単価の線、売買の▲▼）
+3. **売買エンジンをv2に更新**（上記「AIの戦略と学習」）。保有銘柄・資金・成績は引き継ぎ
+4. **週1回のバックテスト**を作成。初回結果（検証期間の30日）：
+   - 選ばれた設定 **+9.7%**（最大下落 -8.3%）
+   - 初期設定 -9.7%（最大下落 -16.5%）
+   - 何もせず均等保有 **+25.2%**（最大下落 -10.1%）
+   - → 初期設定よりは大きく改善したが、上昇相場では均等保有に負けている。儲かるAIかどうかはまだ判断できない
+5. 状況ページに**「AIの戦略と学習」カード**を追加（戦略ごとの重み・バックテスト結果・銘柄ごとの票）
+6. **週次学習レポート**を作成（毎週日曜21:00）
+7. レポートの送信先を分けた：日次 → #shuusi、週次 → #learn
+
+あわせて直したこと：
+- 取引に時刻と売却理由を記録するようにした（それ以前の取引は時刻がないため、日次・週次の取引件数に入らない。売却理由は「その他」と表示される）
+- 取引履歴の保存を200件 → 400件に増やした（1週間分が収まるように）
+- 値動きのほとんどないコイン（ステーブルコインなど）をウォッチリストから自動で外すようにした
+- 状況ページの「5分ごと」の表記を「15分ごと」に修正
 
 ## 既知の制約
 
 - **日本株（4桁コード）は実価格取得に対応していません。** Twelve Data・FCS API・JPX公式のいずれも無料プランでは日本の証券取引所データを提供しておらず、手動入力のみ対応です。
-- サーバー側AI（Cloudflare Workers）は、当初 Cloudflare 自身の Cron Trigger 機能で自動実行する予定でしたが、**新規アカウントでcronが登録されても発火しないCloudflare側の既知の不具合**に当たったため、GitHub Actionsの定期実行（5分ごと）で代替しています。
+- サーバー側AIは、当初 Cloudflare 自身の Cron Trigger で動かす予定でしたが、**新規アカウントでcronが登録されても発火しないCloudflare側の既知の不具合**に当たったため、GitHub Actionsの定期実行で代替しています。`worker/wrangler.toml` のcron設定は残してあり、不具合が直っても二重実行・二重送信にはなりません。
+- GitHub Actionsの定期実行は、リポジトリに60日間コミットがないと自動停止します。週1回のバックテストが結果をコミットするので、通常は止まりません。
 - ブラウザ版・サーバー版のAIはそれぞれ別のデータ（別会計のポートフォリオ）です。
-- データはブラウザのlocalStorageに保存されるため、スマホとPCで別のデータになります（設定タブのエクスポート/インポートで手動移行可能）。
+- ブラウザ版のデータはlocalStorageに保存されるため、スマホとPCで別のデータになります（設定タブのエクスポート/インポートで手動移行可能）。
 
-## APIキーの管理場所
+## APIキー・シークレットの管理場所
 
-- Twelve Data APIキー：ブラウザ版アプリの「設定」タブ（localStorage保存）／Cloudflare Workerのシークレット（`wrangler secret put TWELVE_DATA_KEY` で設定済み）
-- FCS APIキー：登録はしたが、日本株が無料プラン対象外だったため現在未使用（アプリからは削除済み）
+| 名前 | 場所 | 用途 |
+|---|---|---|
+| `TWELVE_DATA_KEY` | Cloudflare Workerのシークレット（ブラウザ版は「設定」タブ） | 米国株の価格 |
+| `COINGECKO_API_KEY` | Cloudflare Workerのシークレット | 暗号資産の価格（任意。GitHubのリポジトリシークレットにも登録するとバックテストが速くなる） |
+| `DISCORD_WEBHOOK_URL` | Cloudflare Workerのシークレット | 日次レポート → #shuusi |
+| `DISCORD_WEBHOOK_URL_LEARN` | Cloudflare Workerのシークレット | 週次レポート → #learn |
+
+- FCS APIキー：登録はしたが、日本株が無料プラン対象外だったため未使用
+
+**シークレットの登録・変更方法**（自分のPowerShellで実行）：
+
+```
+cd "C:\Users\rutsuki sub\Documents\tousi-project\worker"
+npx.cmd wrangler secret put シークレット名
+```
+
+- `npx` ではなく `npx.cmd` を使う（Windowsの設定で `npx` がブロックされるため）
+- 「Enter a secret value」と出たら値を右クリックで貼り付けてEnter（画面には表示されない）
+- DiscordのウェブフックはチャンネルのURL（`https://discord.com/api/webhooks/...`）を貼る。チャンネル名ではない
+- Claudeのチャットで `!` を付けて実行すると入力待ちができず、空の値が保存されるので不可
 
 ## 次にやるとしたら
 
+- 数週間分の週次レポートとバックテスト結果を見て、戦略が均等保有に勝てているかを確認する
+- 株式もバックテストの対象にする（Twelve Dataの無料枠と相談しながら）
 - サーバー側AIの初期資金は¥1,000,000（`worker/src/index.js` の `INITIAL_CASH` で変更可能）
-- Cloudflareのcron不具合が直った場合、`worker/wrangler.toml` の `[triggers]` は残してあるので、直れば自動的にもう一系統動き出します（実害はなく、頻度が上がるだけ）
