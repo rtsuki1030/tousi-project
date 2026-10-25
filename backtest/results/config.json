@@ -1,6 +1,6 @@
 {
   "source": "backtest",
-  "generatedAt": "2026-10-18T20:19:47.371Z",
+  "generatedAt": "2026-10-25T20:35:59.497Z",
   "adoptedAt": "2026-09-28T13:14:40.330Z",
   "params": {
     "momentum": {
@@ -42,22 +42,30 @@
     "breakout": 0.0105463
   },
   "report": {
-    "generatedAt": "2026-10-18T20:19:47.371Z",
+    "generatedAt": "2026-10-25T20:35:59.497Z",
     "adopted": false,
-    "dataFrom": "2026-07-25T23:00:00.000Z",
-    "trainEnd": "2026-09-18T21:00:00.000Z",
-    "dataTo": "2026-10-18T20:00:00.000Z",
+    "dataFrom": "2026-08-01T23:00:00.000Z",
+    "trainEnd": "2026-09-25T21:00:00.000Z",
+    "dataTo": "2026-10-25T20:00:00.000Z",
     "coins": [
-      "4",
-      "SHIB",
-      "LDO",
+      "OKB",
+      "LTC",
+      "RENDER",
+      "XDC",
+      "VIRTUAL",
+      "NEAR",
       "ICP",
-      "PEPE",
-      "SKY",
-      "STABLE",
-      "UNI",
-      "BTC",
+      "SUI",
+      "DOGE",
+      "A7A5",
+      "HASH",
+      "GNO",
+      "VVV",
+      "TRUMP",
+      "RAY",
       "ETH",
+      "JUP",
+      "BTC",
       "BNB",
       "XRP",
       "SOL",
@@ -65,55 +73,49 @@
       "FIGR_HELOC",
       "ZEC",
       "HYPE",
-      "DOGE",
       "XMR",
       "WBT",
       "LINK",
       "LEO",
-      "ADA",
-      "RAIN",
-      "NEAR",
-      "XLM",
-      "BCH",
-      "LTC"
+      "ADA"
     ],
     "train": {
       "chosen": {
-        "ret": 0.208677,
-        "maxDD": 0.144288,
-        "trades": 652,
-        "winRate": 0.320872,
-        "objective": 0.136533
+        "ret": 0.681411,
+        "maxDD": 0.0756521,
+        "trades": 890,
+        "winRate": 0.493182,
+        "objective": 0.643585
       }
     },
     "test": {
       "chosen": {
-        "ret": -0.112919,
-        "maxDD": 0.129259,
-        "trades": 369,
-        "winRate": 0.338798,
-        "objective": -0.177549
+        "ret": 0.182714,
+        "maxDD": 0.137454,
+        "trades": 484,
+        "winRate": 0.468354,
+        "objective": 0.113987
       },
       "previous": {
-        "ret": -0.0653882,
-        "maxDD": 0.137737,
-        "trades": 339,
-        "winRate": 0.369048,
-        "objective": -0.134257
+        "ret": 0.274531,
+        "maxDD": 0.0766111,
+        "trades": 352,
+        "winRate": 0.497076,
+        "objective": 0.236226
       },
       "buyHold": {
-        "ret": -0.0819694,
-        "maxDD": 0.16846
+        "ret": -0.110116,
+        "maxDD": 0.146465
       }
     },
     "strategies": [
       {
         "key": "momentum",
         "params": {
-          "n": 24
+          "n": 48
         },
-        "trainRet": 0.0603849,
-        "testRet": -0.175304
+        "trainRet": 0.000980158,
+        "testRet": -0.231044
       },
       {
         "key": "maCross",
@@ -121,8 +123,8 @@
           "fast": 24,
           "slow": 120
         },
-        "trainRet": 0.174408,
-        "testRet": -0.0783798
+        "trainRet": 0.252541,
+        "testRet": -0.233829
       },
       {
         "key": "rsi",
@@ -131,8 +133,8 @@
           "low": 30,
           "high": 70
         },
-        "trainRet": 0.0923588,
-        "testRet": -0.00887897
+        "trainRet": 0.223004,
+        "testRet": 0.066529
       },
       {
         "key": "bollinger",
@@ -140,16 +142,16 @@
           "period": 48,
           "k": 1.5
         },
-        "trainRet": 0.0782176,
-        "testRet": 0.00145635
+        "trainRet": 0.270838,
+        "testRet": 0.0558508
       },
       {
         "key": "breakout",
         "params": {
           "n": 72
         },
-        "trainRet": 0.170993,
-        "testRet": -0.0861769
+        "trainRet": 0.247444,
+        "testRet": -0.156789
       }
     ]
   }
